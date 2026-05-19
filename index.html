@@ -20,6 +20,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js" onerror="window._firebaseLoadErr=true"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js" onerror="window._firebaseLoadErr=true"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js" onerror="window._firebaseAuthLoadErr=true"></script>
 <style>
 :root {
   --bg: #0d0f14;
@@ -189,6 +190,7 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
   <span style="font-size:11px;font-family:var(--mono)" id="sync-status"></span>
   <span style="font-size:11px;color:var(--muted);font-family:var(--mono)" id="session-count-badge"></span>
   <button class="btn sm" id="username-btn" onclick="changeUsername()" style="font-size:11px;padding:3px 10px;border-color:rgba(255,255,255,.15)"></button>
+  <button class="btn sm" id="auth-logout-btn" onclick="logoutAuth()" style="display:none;font-size:11px;padding:3px 10px;border-color:rgba(255,255,255,.15)" title="登出">登出</button>
   <button class="btn sm" onclick="openSettings()" style="font-size:14px;padding:3px 10px;border-color:rgba(255,255,255,.15)" title="設定">⚙️</button>
 </div>
 </div>
@@ -373,6 +375,26 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
 
 </div><!-- .main -->
 
+<!-- ══ LOGIN MODAL ══ -->
+<div id="auth-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.86);z-index:5000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border:1px solid var(--border2);border-radius:18px;padding:26px 22px;width:340px;max-width:92vw;box-shadow:0 16px 50px rgba(0,0,0,.35)">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div style="width:34px;height:34px;background:var(--accent);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#0d0f14;font-weight:700">♠</div>
+      <div>
+        <div style="font-size:18px;font-weight:700">Poker Tracker 登入</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">請用 Firebase 建立的 Email / 密碼登入</div>
+      </div>
+    </div>
+    <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px">Email</label>
+    <input id="auth-email" type="email" autocomplete="username" placeholder="輸入 Email" style="width:100%;margin-bottom:10px;font-size:14px;padding:10px 12px;border:1px solid var(--border2);border-radius:8px;background:var(--surface2);color:var(--text)">
+    <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:5px">密碼</label>
+    <input id="auth-password" type="password" autocomplete="current-password" placeholder="輸入密碼" onkeydown="if(event.key==='Enter')loginAuth()" style="width:100%;margin-bottom:8px;font-size:14px;padding:10px 12px;border:1px solid var(--border2);border-radius:8px;background:var(--surface2);color:var(--text)">
+    <div id="auth-error" style="display:none;color:var(--red);font-size:12px;margin-bottom:10px;line-height:1.5"></div>
+    <button id="auth-login-btn" class="btn primary" onclick="loginAuth()" style="width:100%;padding:10px 16px;margin-top:4px">登入</button>
+    <div style="font-size:11px;color:var(--muted);margin-top:12px;line-height:1.5">登入成功後會自動同步雲端資料。若之後鎖定 Database Rules，只有指定 UID 能讀寫。</div>
+  </div>
+</div>
+
 <!-- ══ SETTINGS MODAL ══ -->
 <div id="settings-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:3500;align-items:flex-end;justify-content:center">
   <div style="background:var(--surface);border-radius:18px 18px 0 0;width:100%;max-width:680px;max-height:88vh;overflow-y:auto;padding:20px 18px 36px">
@@ -514,10 +536,12 @@ const firebaseConfig = {
   messagingSenderId: "461643043630",
   appId: "1:461643043630:web:aa13128fdd62a693cfa0bf"
 };
-let db = null, sessionsRef = null;
+const ALLOWED_UID = 'pvkbux3XKwWzYwAuO4rwLmQiE2I2';
+let db = null, auth = null, sessionsRef = null, firebaseListening = false;
 try {
   firebase.initializeApp(firebaseConfig);
   db = firebase.database();
+  if(firebase.auth) auth = firebase.auth();
   sessionsRef = db.ref('sessions');
 } catch(e) {
   console.warn('Firebase 初始化失敗:', e);
@@ -530,7 +554,7 @@ let lastResult = null;
 
 // ─── FIREBASE SYNC: 即時監聽資料庫變化 ───
 function initFirebase() {
-  if(window._firebaseLoadErr || typeof firebase === 'undefined') {
+  if(window._firebaseLoadErr || typeof firebase === 'undefined' || !sessionsRef) {
     showSyncStatus('error');
     console.warn('Firebase 未載入，使用本機模式');
     // fallback: load from localStorage
@@ -538,6 +562,16 @@ function initFirebase() {
     updateBadge();
     return;
   }
+
+  // Database Rules 已鎖定時，必須登入 Firebase Auth 才能同步。
+  if(auth && (!auth.currentUser || auth.currentUser.uid !== ALLOWED_UID)) {
+    showSyncStatus('locked');
+    showAuthGate();
+    return;
+  }
+
+  if(firebaseListening) return;
+  firebaseListening = true;
   showSyncStatus('connecting');
   try {
     sessionsRef.on('value', snapshot => {
@@ -550,13 +584,103 @@ function initFirebase() {
       const sumTab = document.getElementById('page-summary');
       if(sumTab && sumTab.classList.contains('active')) renderSessionSelect();
     }, err => {
+      console.error('Firebase listen error:', err);
+      firebaseListening = false;
       showSyncStatus('error');
     });
   } catch(e) {
+    firebaseListening = false;
     showSyncStatus('error');
     console.error('Firebase init error:', e);
   }
 }
+
+function showAuthGate(msg) {
+  const modal = document.getElementById('auth-modal');
+  if(modal) modal.style.display = 'flex';
+  const err = document.getElementById('auth-error');
+  if(err && msg) { err.textContent = msg; err.style.display = 'block'; }
+}
+
+function hideAuthGate() {
+  const modal = document.getElementById('auth-modal');
+  if(modal) modal.style.display = 'none';
+  const err = document.getElementById('auth-error');
+  if(err) { err.textContent = ''; err.style.display = 'none'; }
+}
+
+async function loginAuth() {
+  const emailEl = document.getElementById('auth-email');
+  const pwdEl = document.getElementById('auth-password');
+  const btn = document.getElementById('auth-login-btn');
+  const err = document.getElementById('auth-error');
+  const email = (emailEl?.value || '').trim();
+  const password = pwdEl?.value || '';
+
+  if(!auth) {
+    if(err) { err.textContent = 'Firebase Auth 未載入，請重新整理或檢查網路。'; err.style.display = 'block'; }
+    return;
+  }
+  if(!email || !password) {
+    if(err) { err.textContent = '請輸入 Email 和密碼。'; err.style.display = 'block'; }
+    return;
+  }
+
+  if(btn) { btn.disabled = true; btn.textContent = '登入中...'; }
+  if(err) { err.textContent = ''; err.style.display = 'none'; }
+  try {
+    await auth.signInWithEmailAndPassword(email, password);
+  } catch(e) {
+    let msg = '登入失敗，請確認 Email / 密碼是否正確。';
+    if(e && e.code === 'auth/too-many-requests') msg = '嘗試次數過多，請稍後再試。';
+    if(e && e.code === 'auth/user-not-found') msg = '找不到這個帳號，請先到 Firebase Authentication 建立使用者。';
+    if(e && e.code === 'auth/wrong-password') msg = '密碼錯誤，請再試一次。';
+    if(err) { err.textContent = msg; err.style.display = 'block'; }
+  } finally {
+    if(btn) { btn.disabled = false; btn.textContent = '登入'; }
+  }
+}
+
+async function logoutAuth() {
+  if(!auth) return;
+  try {
+    if(sessionsRef) sessionsRef.off();
+    firebaseListening = false;
+    await auth.signOut();
+  } catch(e) {
+    showToast('登出失敗，請重試');
+  }
+}
+
+function initAuthGate() {
+  if(window._firebaseAuthLoadErr || !auth) {
+    showSyncStatus('error');
+    showAuthGate('Firebase Auth 未載入，請重新整理或檢查網路。');
+    return;
+  }
+
+  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
+  auth.onAuthStateChanged(async user => {
+    const logoutBtn = document.getElementById('auth-logout-btn');
+    if(user && user.uid === ALLOWED_UID) {
+      hideAuthGate();
+      if(logoutBtn) logoutBtn.style.display = 'inline-block';
+      initFirebase();
+    } else {
+      if(sessionsRef) sessionsRef.off();
+      firebaseListening = false;
+      if(logoutBtn) logoutBtn.style.display = 'none';
+      showSyncStatus('locked');
+      if(user && user.uid !== ALLOWED_UID) {
+        await auth.signOut().catch(()=>{});
+        showAuthGate('這個帳號沒有權限使用此資料庫。');
+      } else {
+        showAuthGate();
+      }
+    }
+  });
+}
+
 
 function showSyncStatus(state) {
   const el = document.getElementById('sync-status');
@@ -565,6 +689,7 @@ function showSyncStatus(state) {
   if(state==='ok')          { el.textContent = isMobile ? '●' : '● 已同步';   el.style.color='var(--green)'; }
   else if(state==='saving') { el.textContent = isMobile ? '●' : '↑ 儲存中...'; el.style.color='var(--accent)'; }
   else if(state==='connecting') { el.textContent = isMobile ? '○' : '⟳ 連線中...'; el.style.color='var(--muted)'; }
+  else if(state==='locked') { el.textContent = isMobile ? '🔒' : '🔒 請登入'; el.style.color='var(--accent)'; }
   else                      { el.textContent = isMobile ? '●' : '✗ 連線失敗'; el.style.color='var(--red)'; }
 }
 
@@ -1327,6 +1452,11 @@ async function persistToFirebase(session) {
     showToast('離線模式：資料已存本機');
     return;
   }
+  if(auth && (!auth.currentUser || auth.currentUser.uid !== ALLOWED_UID)) {
+    showAuthGate('請先登入，才能儲存到雲端。');
+    showSyncStatus('locked');
+    return;
+  }
   showSyncStatus('saving');
   try {
     await sessionsRef.child(String(session.id)).set(session);
@@ -1337,11 +1467,21 @@ async function persistToFirebase(session) {
   }
 }
 async function deleteFromFirebase(sessionId) {
+  if(auth && (!auth.currentUser || auth.currentUser.uid !== ALLOWED_UID)) {
+    showAuthGate('請先登入，才能刪除雲端資料。');
+    showSyncStatus('locked');
+    return;
+  }
   try {
     await sessionsRef.child(sessionId).remove();
   } catch(e) { showToast('刪除失敗，請重試'); }
 }
 async function clearAllFirebase() {
+  if(auth && (!auth.currentUser || auth.currentUser.uid !== ALLOWED_UID)) {
+    showAuthGate('請先登入，才能清除雲端資料。');
+    showSyncStatus('locked');
+    return;
+  }
   try {
     await sessionsRef.remove();
   } catch(e) { showToast('清除失敗，請重試'); }
@@ -1371,8 +1511,8 @@ function showToast(msg) {
 updateFeeDisplay();
 updateBadge();
 refreshUsernameBtn();
-initFirebase();
-// Restore draft after a short delay (let firebase load first)
+initAuthGate();
+// Restore draft after a short delay (let firebase/auth load first)
 setTimeout(() => { if(!loadDraft()) renderPlayers(); }, 800);
 
 // ─── PWA SETUP ───
