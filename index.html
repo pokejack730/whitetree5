@@ -1115,7 +1115,7 @@ function buildSummaryStats(selected, opts = {}) {
     totalTable += (FEE.table[b]||0)*ts;
     s.players.forEach(p => {
       if(!p.name) return;
-      if(!map[p.name]) map[p.name]={name:p.name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0};
+      if(!map[p.name]) map[p.name]={name:p.name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0,settlementAmount:0,settlementType:''};
       const m = map[p.name];
       m.count++; m.cost+=p.cost; m.prize+=p.prize; m.rp+=p.rankPrize; m.net+=p.net;
       if(p.rankNum===1) m.r1++;
@@ -1126,12 +1126,23 @@ function buildSummaryStats(selected, opts = {}) {
 
   if (includeSettlement) {
     const ensure = (name) => {
-      if(!map[name]) map[name]={name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0};
+      if(!map[name]) map[name]={name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0,settlementAmount:0,settlementType:''};
       return map[name];
     };
-    ensure('眼').net += totalVenue;
-    ensure('Jky').net += totalChips;
-    ensure('雲').net += totalTable;
+    const venueReceiver = ensure('眼');
+    venueReceiver.net += totalVenue;
+    venueReceiver.settlementAmount += totalVenue;
+    venueReceiver.settlementType = '場地池';
+
+    const chipsReceiver = ensure('Jky');
+    chipsReceiver.net += totalChips;
+    chipsReceiver.settlementAmount += totalChips;
+    chipsReceiver.settlementType = '籌碼池';
+
+    const tableReceiver = ensure('雲');
+    tableReceiver.net += totalTable;
+    tableReceiver.settlementAmount += totalTable;
+    tableReceiver.settlementType = '桌池';
   }
 
   const list = Object.values(map).sort((a,b)=>b.net-a.net);
@@ -1994,7 +2005,12 @@ window.exportImage = async function() {
       ? `${minDate.toLocaleDateString('zh-TW')} ～ ${maxDate.toLocaleDateString('zh-TW')}`
       : new Date().toLocaleDateString('zh-TW');
     const noteHtml = includeSettlement
-      ? `<div style="margin-top:8px;font-size:12px;color:var(--muted);line-height:1.6">含統計結算：<span style="color:var(--text)">場地池合計 ${stats.totalVenue}</span> 加給 <span style="color:var(--accent)">眼</span>、<span style="color:var(--text)">籌碼池合計 ${stats.totalChips}</span> 加給 <span style="color:var(--accent)">Jky</span>、<span style="color:var(--text)">桌池合計 ${stats.totalTable}</span> 加給 <span style="color:var(--accent)">雲</span></div>`
+      ? `<div style="margin-top:8px;font-size:12px;color:var(--muted);line-height:1.6">含統計結算：<span style="color:var(--text)">場地池合計 ${stats.totalVenue}</span> 加給 <span style="color:var(--accent)">眼</span>、<span style="color:var(--text)">籌碼池合計 ${stats.totalChips}</span> 加給 <span style="color:var(--accent)">Jky</span>、<span style="color:var(--text)">桌池合計 ${stats.totalTable}</span> 加給 <span style="color:var(--accent)">雲</span></div>
+         <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:10px 14px;padding:12px 14px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.03)">
+           <div style="display:flex;align-items:center;gap:8px;color:#f6c453;font-weight:600"><span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:rgba(246,196,83,.12);border:1px solid rgba(246,196,83,.35)">📍</span><span>場地池 → 眼</span></div>
+           <div style="display:flex;align-items:center;gap:8px;color:#64a8ff;font-weight:600"><span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:rgba(100,168,255,.12);border:1px solid rgba(100,168,255,.35)">🪙</span><span>籌碼池 → Jky</span></div>
+           <div style="display:flex;align-items:center;gap:8px;color:#be7bff;font-weight:600"><span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:rgba(190,123,255,.12);border:1px solid rgba(190,123,255,.35)">🪑</span><span>桌池 → 雲</span></div>
+         </div>`
       : '';
 
     exportSource.innerHTML = `
@@ -2021,17 +2037,30 @@ window.exportImage = async function() {
             ${stats.list.map((p,idx) => {
               const nc = p.net>=0?'pos':'neg';
               const medal = idx===0?'🥇':idx===1?'🥈':idx===2?'🥉':'';
+              const tagStyleMap = {
+                '場地池': { bg:'rgba(246,196,83,.10)', bd:'rgba(246,196,83,.35)', fg:'#f6c453' },
+                '籌碼池': { bg:'rgba(100,168,255,.10)', bd:'rgba(100,168,255,.35)', fg:'#64a8ff' },
+                '桌池': { bg:'rgba(190,123,255,.10)', bd:'rgba(190,123,255,.35)', fg:'#be7bff' }
+              };
+              const style = tagStyleMap[p.settlementType] || { bg:'rgba(255,255,255,.05)', bd:'rgba(255,255,255,.12)', fg:'#9ca3af' };
+              const nameTag = includeSettlement && p.settlementAmount > 0
+                ? `<span style="display:inline-flex;align-items:center;margin-left:8px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;background:${style.bg};border:1px solid ${style.bd};color:${style.fg}">${p.settlementType}</span>`
+                : '';
+              const settlementTag = includeSettlement && p.settlementAmount > 0
+                ? `<span style="display:inline-flex;align-items:center;margin-left:8px;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;background:${style.bg};border:1px solid ${style.bd};color:${style.fg}">+結算 ${Math.round(p.settlementAmount).toLocaleString()}</span>`
+                : '';
               return `<tr>
-                <td>${medal} ${p.name}</td>
+                <td>${medal} ${p.name}${nameTag}</td>
                 <td class="mono">${p.count}</td>
                 <td class="mono">${Math.round(p.cost).toLocaleString()}</td>
                 <td class="mono">${Math.round(p.prize).toLocaleString()}</td>
                 <td class="mono">${Math.round(p.rp).toLocaleString()}</td>
-                <td class="${nc}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td>
+                <td class="${nc}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}${settlementTag}</td>
               </tr>`;
             }).join('')}
           </tbody>
         </table>
+        ${includeSettlement ? `<div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.6">註：淨收付欄位中的 <span style="color:var(--text)">+結算</span>，代表該玩家已加計對應的場地池 / 籌碼池 / 桌池金額。</div>` : ''}
       </div>
       <div class="card">
         <div class="card-title">名次榮譽榜</div>
