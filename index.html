@@ -249,6 +249,11 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="card-title" style="margin:0">玩家資料</div>
       <button class="btn sm" onclick="addRow()">＋ 新增玩家</button>
     </div>
+    <div id="table-presets-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn sm" onclick="saveCurrentAsTablePreset()">💾 儲存目前玩家為桌型</button>
+      <button class="btn sm ghost" onclick="suggestSessionName(true)">🔢 自動命名</button>
+    </div>
     <div class="player-grid hdr">
       <span>玩家名稱</span>
       <span class="center">組數</span>
@@ -402,6 +407,7 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
       <button class="btn" id="btn-export-summary" onclick="exportSummaryImage()">📸 導出統計圖片</button>
       <button class="btn" id="btn-export-summary-settlement" onclick="exportSummaryImageWithSettlement()">📸 導出含場地/籌碼/桌統計結算</button>
       <button class="btn" id="btn-export-leaderboards" onclick="exportSummaryLeaderboardsImage()">🏆 導出玩家排行榜</button>
+      <button class="btn" id="btn-export-brief" onclick="exportBriefReportImage()">📰 導出戰報短圖</button>
     </div>
   </div>
 </div>
@@ -449,6 +455,13 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
       <button class="btn sm" onclick="addSettingPlayer()">＋ 新增</button>
     </div>
     <div id="settings-players-list" style="margin-bottom:16px"></div>
+
+    <!-- Table Presets -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="card-title" style="margin:0">常用桌型</div>
+      <button class="btn sm" onclick="addTablePresetFromSettings()">＋ 新增桌型</button>
+    </div>
+    <div id="settings-table-presets" style="margin-bottom:16px"></div>
 
     <!-- Backup -->
     <div class="card-title">資料備份</div>
@@ -765,6 +778,7 @@ function updateFeeDisplay() {
 
 // ─── RENDER PLAYERS ───
 function renderPlayers() {
+  renderTablePresetButtons();
   const list = document.getElementById('players-list');
   list.innerHTML = '';
   const playerList = getPlayerList();
@@ -814,12 +828,177 @@ function updateChipCheck() {
   }
 }
 
+
+function saveDraft() {
+  const draft = {
+    name: document.getElementById('s-name')?.value || '',
+    buyin: document.getElementById('s-buyin')?.value || '330',
+    cps: document.getElementById('s-cps')?.value || '30000',
+    players
+  };
+  try { localStorage.setItem('poker_current_draft', JSON.stringify(draft)); } catch(e){}
+}
+
+function loadDraft() {
+  try {
+    const raw = localStorage.getItem('poker_current_draft');
+    if(!raw) {
+      suggestSessionName(false);
+      renderTablePresetButtons();
+      return false;
+    }
+    const d = JSON.parse(raw);
+    if(d.name) document.getElementById('s-name').value = d.name;
+    else suggestSessionName(false);
+    if(d.buyin) document.getElementById('s-buyin').value = d.buyin;
+    if(d.cps) document.getElementById('s-cps').value = d.cps;
+    if(Array.isArray(d.players) && d.players.length) players = d.players;
+    updateFeeDisplay();
+    renderPlayers();
+    renderTablePresetButtons();
+    return true;
+  } catch(e) {
+    suggestSessionName(false);
+    renderTablePresetButtons();
+    return false;
+  }
+}
+
+function clearDraft() {
+  try { localStorage.removeItem('poker_current_draft'); } catch(e){}
+  const nameInput = document.getElementById('s-name');
+  if(nameInput) nameInput.value = '';
+  suggestSessionName(false);
+}
+
+function getNextSessionName() {
+  const now = new Date();
+  const base = `${now.getMonth()+1}/${now.getDate()}`;
+  let maxNo = 0;
+  sessions.forEach(s => {
+    const m = String(s.name || '').match(new RegExp('^' + base.replace('/', '\\/') + '-(\\d+)$'));
+    if(m) maxNo = Math.max(maxNo, parseInt(m[1],10) || 0);
+  });
+  return `${base}-${maxNo + 1}`;
+}
+
+function suggestSessionName(force=false) {
+  const input = document.getElementById('s-name');
+  if(!input) return;
+  if(force || !input.value.trim()) {
+    input.value = getNextSessionName();
+    saveDraft();
+  }
+}
+
+function getTablePresets() {
+  try { return JSON.parse(localStorage.getItem('poker_table_presets')||'[]'); } catch(e){ return []; }
+}
+function saveTablePresets(list) {
+  try { localStorage.setItem('poker_table_presets', JSON.stringify(list)); } catch(e){}
+}
+
+function renderTablePresetButtons() {
+  const bar = document.getElementById('table-presets-bar');
+  if(!bar) return;
+  const presets = getTablePresets();
+  if(!presets.length) {
+    bar.innerHTML = '<span style="font-size:12px;color:var(--muted);align-self:center">尚未設定常用桌型，可先儲存目前玩家為桌型</span>';
+    return;
+  }
+  bar.innerHTML = presets.map((p,i) =>
+    `<button class="btn sm" onclick="applyTablePreset(${i})">套用 ${p.name}</button>`
+  ).join('');
+}
+
+function applyTablePreset(index) {
+  const presets = getTablePresets();
+  const preset = presets[index];
+  if(!preset || !Array.isArray(preset.players)) return;
+  players = preset.players.map(name => ({name, sets:1, chips:'', rank:''}));
+  renderPlayers();
+  updateChipCheck();
+  saveDraft();
+  showToast('已套用桌型：' + preset.name);
+}
+
+function saveCurrentAsTablePreset() {
+  const names = players.map(p=>String(p.name||'').trim()).filter(Boolean);
+  if(!names.length) { alert('目前沒有玩家可儲存為桌型'); return; }
+  const defaultName = `桌型 ${getTablePresets().length + 1}`;
+  const presetName = prompt('請輸入桌型名稱：', defaultName);
+  if(presetName === null) return;
+  const name = presetName.trim();
+  if(!name) { alert('桌型名稱不可空白'); return; }
+
+  const presets = getTablePresets();
+  const exists = presets.findIndex(p => p.name === name);
+  const payload = { name, players: names };
+  if(exists >= 0) {
+    if(!confirm('同名桌型已存在，是否覆蓋？')) return;
+    presets[exists] = payload;
+  } else {
+    presets.push(payload);
+  }
+  saveTablePresets(presets);
+  renderTablePresetButtons();
+  renderSettingsTablePresets();
+  showToast('已儲存桌型：' + name);
+}
+
+function renderSettingsTablePresets() {
+  const div = document.getElementById('settings-table-presets');
+  if(!div) return;
+  const presets = getTablePresets();
+  if(!presets.length) {
+    div.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:8px 0">尚無桌型，回到單場結算可把目前玩家儲存為桌型</div>';
+    return;
+  }
+  div.innerHTML = presets.map((p,i) => `
+    <div style="padding:9px 0;border-bottom:0.5px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input value="${p.name}" onchange="renameTablePreset(${i}, this.value)" style="flex:1">
+        <button class="btn sm" onclick="applyTablePreset(${i});closeSettings()">套用</button>
+        <button class="btn sm ghost" onclick="removeTablePreset(${i})">✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:5px">${p.players.join('、')}</div>
+    </div>
+  `).join('');
+}
+
+function addTablePresetFromSettings() {
+  saveCurrentAsTablePreset();
+}
+
+function renameTablePreset(index, value) {
+  const name = String(value||'').trim();
+  if(!name) { renderSettingsTablePresets(); return; }
+  const presets = getTablePresets();
+  if(!presets[index]) return;
+  presets[index].name = name;
+  saveTablePresets(presets);
+  renderTablePresetButtons();
+  renderSettingsTablePresets();
+}
+
+function removeTablePreset(index) {
+  const presets = getTablePresets();
+  if(!presets[index]) return;
+  if(!confirm('確定刪除桌型「' + presets[index].name + '」？')) return;
+  presets.splice(index,1);
+  saveTablePresets(presets);
+  renderTablePresetButtons();
+  renderSettingsTablePresets();
+}
+
+
 function addRow() { players.push({name:'',sets:1,chips:'',rank:''}); renderPlayers(); saveDraft(); }
 function removeRow(i) { players.splice(i,1); renderPlayers(); saveDraft(); }
 function resetCalc() {
   if(!confirm('確定清除？未儲存的資料將會消失。')) return;
   players = [{name:'',sets:1,chips:'',rank:''},{name:'',sets:1,chips:'',rank:''}];
   document.getElementById('s-name').value = '';
+  suggestSessionName(false);
   renderPlayers();
   document.getElementById('calc-result').style.display='none';
   lastResult = null;
@@ -1074,6 +1253,7 @@ async function saveSession() {
   showToast(`✓ 已儲存「${lastResult.name}」並同步雲端`);
   clearDraft();
   updateBadge();
+  suggestSessionName(false);
 }
 
 // ─── HISTORY ───
@@ -1388,16 +1568,22 @@ function renderSummaryLeaderboards(stats) {
   const box = document.getElementById('summary-leaderboards');
   if(!box) return;
 
-  const simpleRows = (rows, valueFn) => rows.map((p, idx) => {
+  const simpleRows = (rows, valueFn, suffix='') => rows.map((p, idx) => {
     const v = valueFn(p);
-    const cls = v>=0 ? 'pos' : 'neg';
-    return `<tr><td>${idx+1}</td><td>${p.name}</td><td class="${cls}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`;
+    const cls = suffix ? '' : (v>=0 ? 'pos' : 'neg');
+    const sign = suffix ? '' : (v>=0?'+':'');
+    return `<tr><td style="width:46px">${idx+1}</td><td>${p.name}</td><td class="${cls}" style="white-space:nowrap;text-align:right">${sign}${Math.round(v).toLocaleString()}${suffix}</td></tr>`;
   }).join('');
 
   const singleRows = (rows) => rows.map((p, idx) => {
     const v = p.net;
     const cls = v>=0 ? 'pos' : 'neg';
-    return `<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${cls}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`;
+    return `<tr>
+      <td style="width:46px">${idx+1}</td>
+      <td style="width:80px">${p.name}</td>
+      <td style="white-space:nowrap;min-width:92px">${p.sessionName}</td>
+      <td class="${cls}" style="white-space:nowrap;text-align:right">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td>
+    </tr>`;
   }).join('');
 
   box.innerHTML = `
@@ -1410,17 +1596,17 @@ function renderSummaryLeaderboards(stats) {
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">平均每場淨收付</div>
         <table class="rtable"><tbody>${simpleRows(stats.leaderboards.avgNet, p=>p.count ? p.net/p.count : 0)}</tbody></table>
       </div>
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto;grid-column:1/-1">
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">買入數排行</div>
-        <table class="rtable"><tbody>${simpleRows(stats.leaderboards.buyinCount, p=>p.buyins || 0)}</tbody></table>
+        <table class="rtable"><tbody>${simpleRows(stats.leaderboards.buyinCount, p=>p.buyins || 0, ' 組')}</tbody></table>
       </div>
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto;grid-column:1/-1">
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最高單場盈利</div>
-        <table class="rtable"><tbody>${singleRows(stats.leaderboards.bestSingle)}</tbody></table>
+        <table class="rtable" style="min-width:360px"><tbody>${singleRows(stats.leaderboards.bestSingle)}</tbody></table>
       </div>
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto;grid-column:1/-1">
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最大單場虧損</div>
-        <table class="rtable"><tbody>${singleRows(stats.leaderboards.worstSingle)}</tbody></table>
+        <table class="rtable" style="min-width:360px"><tbody>${singleRows(stats.leaderboards.worstSingle)}</tbody></table>
       </div>
     </div>`;
 }
@@ -1735,6 +1921,7 @@ function openSettings() {
   // Load my name
   document.getElementById('set-myname').value = getUsername();
   renderSettingsPlayers();
+  renderSettingsTablePresets();
   document.getElementById('settings-modal').style.display='flex';
   document.body.style.overflow='hidden';
 }
@@ -1805,7 +1992,8 @@ function exportBackupJSON() {
     exportedAt: new Date().toISOString(),
     exportedBy: getUsername() || '',
     sessions,
-    players: getPlayerList()
+    players: getPlayerList(),
+    tablePresets: getTablePresets()
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -1844,6 +2032,9 @@ async function importBackupJSON(event) {
 
     if(data.players && Array.isArray(data.players)) {
       localStorage.setItem('poker_player_list', JSON.stringify(data.players));
+    }
+    if(data.tablePresets && Array.isArray(data.tablePresets)) {
+      localStorage.setItem('poker_table_presets', JSON.stringify(data.tablePresets));
     }
 
     if(sessionsRef && (!auth || (auth.currentUser && auth.currentUser.uid === ALLOWED_UID))) {
@@ -1933,6 +2124,8 @@ function showToast(msg) {
 updateFeeDisplay();
 updateBadge();
 refreshUsernameBtn();
+suggestSessionName(false);
+renderTablePresetButtons();
 initAuthGate();
 // Restore draft after a short delay (let firebase/auth load first)
 setTimeout(() => { if(!loadDraft()) renderPlayers(); }, 800);
@@ -2457,6 +2650,71 @@ window.exportImage = async function() {
     return exportSource;
   }
 
+
+
+  function buildBriefReportSource(selectedSessions, stats) {
+    const exportSource = document.createElement('div');
+    const top = stats.leaderboards.topProfit[0];
+    const loss = stats.leaderboards.topLoss[0];
+    const best = stats.leaderboards.bestSingle[0];
+    const worst = stats.leaderboards.worstSingle[0];
+    const buyin = stats.leaderboards.buyinCount[0];
+    const dateList = selectedSessions.map(s => new Date(s.date)).filter(d => !isNaN(d));
+    const minDate = dateList.length ? new Date(Math.min(...dateList.map(d => d.getTime()))) : null;
+    const maxDate = dateList.length ? new Date(Math.max(...dateList.map(d => d.getTime()))) : null;
+    const dateText = minDate && maxDate
+      ? `${minDate.toLocaleDateString('zh-TW')} ～ ${maxDate.toLocaleDateString('zh-TW')}`
+      : new Date().toLocaleDateString('zh-TW');
+
+    const metric = (label, main, sub, cls='') => `
+      <div style="border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.035);padding:14px 16px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${label}</div>
+        <div class="${cls}" style="font-size:24px;font-weight:800;line-height:1.2">${main}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px">${sub||''}</div>
+      </div>`;
+
+    exportSource.innerHTML = `
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+          <div>
+            <div style="font-size:22px;font-weight:800;color:var(--text);margin-bottom:4px">本次戰報</div>
+            <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">${dateText}</div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">共 ${selectedSessions.length} 場</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+        ${metric('盈利王', `${top?.name||'-'} ${top ? (top.net>=0?'+':'') + Math.round(top.net).toLocaleString() : ''}`, '總淨收付', top?.net>=0?'pos':'neg')}
+        ${metric('最大虧損', `${loss?.name||'-'} ${loss ? (loss.net>=0?'+':'') + Math.round(loss.net).toLocaleString() : ''}`, '總淨收付', loss?.net>=0?'pos':'neg')}
+        ${metric('最高單場盈利', `${best?.name||'-'} ${best ? '+' + Math.round(best.net).toLocaleString() : ''}`, best ? best.sessionName : '', 'pos')}
+        ${metric('最大單場虧損', `${worst?.name||'-'} ${worst ? Math.round(worst.net).toLocaleString() : ''}`, worst ? worst.sessionName : '', 'neg')}
+        ${metric('買入王', `${buyin?.name||'-'} ${buyin ? (buyin.buyins||0) + ' 組' : ''}`, '總買入組數')}
+        ${metric('總池金', `${stats.totalPools.toLocaleString()}`, `場地 ${stats.totalVenue} / 籌碼 ${stats.totalChips} / 桌 ${stats.totalTable}`)}
+      </div>`;
+    return exportSource;
+  }
+
+  window.exportBriefReportImage = async function() {
+    const btn = document.getElementById('btn-export-brief');
+    const selectedSessions = getSelectedSummarySessions();
+    if (!selectedSessions.length) return showToast('請先選擇並計算多場統計');
+
+    if (btn) { btn.textContent = '⏳ 生成戰報短圖...'; btn.disabled = true; }
+    try {
+      const stats = buildSummaryStats(selectedSessions);
+      const exportSource = buildBriefReportSource(selectedSessions, stats);
+      const canvas = await renderFullElement(exportSource, 640);
+      const result = await shareOrDownloadCanvas(canvas, `poker_brief_${selectedSessions.length}sessions.png`);
+      if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
+      else if (result.method === 'cancel') showToast('已取消分享');
+      else showToast('戰報短圖已下載！');
+    } catch(e) {
+      console.error('exportBriefReportImage failed:', e);
+      showToast('導出失敗，請重試');
+    } finally {
+      if (btn) { btn.textContent = '📰 導出戰報短圖'; btn.disabled = false; }
+    }
+  };
 
   function buildLeaderboardsExportSource(selectedSessions, stats) {
     const exportSource = document.createElement('div');
