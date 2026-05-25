@@ -2677,6 +2677,25 @@ window.exportImage = async function() {
         <div style="font-size:12px;color:var(--muted);margin-top:6px">${sub||''}</div>
       </div>`;
 
+    const rankWinnerLine = (label, key, emoji) => {
+      const rows = stats.list.filter(p => (p[key] || 0) > 0);
+      if(!rows.length) return `<div><span style="color:var(--muted)">${emoji} ${label}</span>：-</div>`;
+      const max = Math.max(...rows.map(p => p[key] || 0));
+      const winners = rows.filter(p => (p[key] || 0) === max).map(p => p.name);
+      const suffix = winners.length > 1 ? `並列-${max}次` : `${max}次`;
+      return `<div><span style="color:var(--muted)">${emoji} ${label}</span>：<span style="color:var(--text);font-weight:700">${winners.join('、')}</span> <span style="color:var(--muted)">(${suffix})</span></div>`;
+    };
+
+    const rankTopCard = `
+      <div style="grid-column:1/-1;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.035);padding:14px 16px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">名次最多</div>
+        <div style="display:grid;gap:7px;font-size:16px;line-height:1.5">
+          ${rankWinnerLine('第一名', 'r1', '🥇')}
+          ${rankWinnerLine('第二名', 'r2', '🥈')}
+          ${rankWinnerLine('第三名', 'r3', '🥉')}
+        </div>
+      </div>`;
+
     exportSource.innerHTML = `
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
@@ -2693,7 +2712,7 @@ window.exportImage = async function() {
         ${metric('最高單場盈利', `${best?.name||'-'} ${best ? '+' + Math.round(best.net).toLocaleString() : ''}`, best ? best.sessionName : '', 'pos')}
         ${metric('最大單場虧損', `${worst?.name||'-'} ${worst ? Math.round(worst.net).toLocaleString() : ''}`, worst ? worst.sessionName : '', 'neg')}
         ${metric('買入王', `${buyin?.name||'-'} ${buyin ? (buyin.buyins||0) + ' 組' : ''}`, '總買入組數')}
-        ${metric('總池金', `${stats.totalPools.toLocaleString()}`, `場地 ${stats.totalVenue} / 籌碼 ${stats.totalChips} / 桌 ${stats.totalTable}`)}
+        ${rankTopCard}
       </div>`;
     return exportSource;
   }
