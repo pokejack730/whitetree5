@@ -1572,18 +1572,22 @@ function renderSummaryLeaderboards(stats) {
     const v = valueFn(p);
     const cls = suffix ? '' : (v>=0 ? 'pos' : 'neg');
     const sign = suffix ? '' : (v>=0?'+':'');
-    return `<tr><td style="width:46px">${idx+1}</td><td>${p.name}</td><td class="${cls}" style="white-space:nowrap;text-align:right">${sign}${Math.round(v).toLocaleString()}${suffix}</td></tr>`;
+    return `<tr>
+      <td style="width:42px">${idx+1}</td>
+      <td>${p.name}</td>
+      <td class="${cls}" style="white-space:nowrap;text-align:right">${sign}${Math.round(v).toLocaleString()}${suffix}</td>
+    </tr>`;
   }).join('');
 
-  const singleRows = (rows) => rows.map((p, idx) => {
+  const singleList = (rows) => rows.map((p, idx) => {
     const v = p.net;
     const cls = v>=0 ? 'pos' : 'neg';
-    return `<tr>
-      <td style="width:46px">${idx+1}</td>
-      <td style="width:80px">${p.name}</td>
-      <td style="white-space:nowrap;min-width:92px">${p.sessionName}</td>
-      <td class="${cls}" style="white-space:nowrap;text-align:right">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td>
-    </tr>`;
+    return `<div style="display:grid;grid-template-columns:34px minmax(70px,1fr) minmax(86px,1fr) minmax(74px,.9fr);align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="font-weight:700">${idx+1}</div>
+      <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</div>
+      <div style="font-family:var(--mono);white-space:nowrap;text-align:center">${p.sessionName}</div>
+      <div class="${cls}" style="font-family:var(--mono);font-weight:700;white-space:nowrap;text-align:right">${v>=0?'+':''}${Math.round(v).toLocaleString()}</div>
+    </div>`;
   }).join('');
 
   box.innerHTML = `
@@ -1600,13 +1604,13 @@ function renderSummaryLeaderboards(stats) {
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">買入數排行</div>
         <table class="rtable"><tbody>${simpleRows(stats.leaderboards.buyinCount, p=>p.buyins || 0, ' 組')}</tbody></table>
       </div>
-      <div style="overflow-x:auto;grid-column:1/-1">
+      <div style="grid-column:1/-1">
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最高單場盈利</div>
-        <table class="rtable" style="min-width:360px"><tbody>${singleRows(stats.leaderboards.bestSingle)}</tbody></table>
+        <div style="font-size:13px">${singleList(stats.leaderboards.bestSingle)}</div>
       </div>
-      <div style="overflow-x:auto;grid-column:1/-1">
+      <div style="grid-column:1/-1">
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最大單場虧損</div>
-        <table class="rtable" style="min-width:360px"><tbody>${singleRows(stats.leaderboards.worstSingle)}</tbody></table>
+        <div style="font-size:13px">${singleList(stats.leaderboards.worstSingle)}</div>
       </div>
     </div>`;
 }
