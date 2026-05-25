@@ -370,6 +370,9 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
         <tbody id="rank-tbody"></tbody>
       </table>
     </div>
+    <div class="btn-row">
+      <button class="btn" id="btn-export-summary" onclick="exportSummaryImage()">📸 導出統計圖片</button>
+    </div>
   </div>
 </div>
 
@@ -1846,6 +1849,28 @@ window.exportImage = async function() {
     } finally {
       card.style.display = 'none';
       if (btn) { btn.textContent = '📸 導出圖片'; btn.disabled = false; }
+    }
+  };
+
+  window.exportSummaryImage = async function() {
+    const wrap = document.getElementById('summary-result');
+    const btn = document.getElementById('btn-export-summary');
+    if (!wrap || wrap.style.display === 'none') return showToast('請先計算多場統計');
+
+    if (btn) { btn.textContent = '⏳ 生成統計圖片...'; btn.disabled = true; }
+    try {
+      const checked = document.querySelectorAll('#session-select input[type=checkbox]:checked').length;
+      const width = Math.max(760, wrap.scrollWidth || 760);
+      const canvas = await renderFullElement(wrap, width);
+      const result = await shareOrDownloadCanvas(canvas, `poker_summary_${checked}sessions.png`);
+      if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
+      else if (result.method === 'cancel') showToast('已取消分享');
+      else showToast('統計圖片已下載！');
+    } catch(e) {
+      console.error('exportSummaryImage failed:', e);
+      showToast('導出失敗，請重試');
+    } finally {
+      if (btn) { btn.textContent = '📸 導出統計圖片'; btn.disabled = false; }
     }
   };
 
