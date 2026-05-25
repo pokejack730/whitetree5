@@ -384,7 +384,6 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
         </tr></thead>
         <tbody id="sum-tbody"></tbody>
       </table>
-      <div id="summary-player-detail" style="display:none;margin-top:14px"></div>
     </div>
     <div class="card">
       <div class="card-title">玩家排行榜</div>
@@ -1201,7 +1200,7 @@ function renderSessionSelect() {
     const isOut = !isChecked;
     return `<div class="chk-row" style="${isOut?'opacity:.42':''}">
       <input type="checkbox" id="chk-${s.id}" ${isChecked?'checked':''}>
-      <label for="chk-${s.id}">${s.name}</label>
+      <label for="chk-${s.id}" style="white-space:nowrap;min-width:72px;flex:0 0 auto">${s.name}</label>
       <span class="chk-meta">${new Date(s.date).toLocaleDateString('zh-TW')} ｜ $${s.buyin} ｜ ${s.players.length}人${isOut?' ｜ 未在篩選範圍':''}</span>
     </div>`;
   }).join('');
@@ -1312,7 +1311,7 @@ function renderSummaryStatsToDom(stats) {
     const medal = idx===0?'🥇':idx===1?'🥈':idx===2?'🥉':'';
     const safeName = String(p.name).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     return `<tr>
-      <td><button class="btn sm" style="padding:2px 8px;margin-right:6px" onclick="showPlayerSummaryDetail('${safeName}')">明細</button>${medal} ${p.name}</td>
+      <td><button class="btn sm summary-detail-btn" style="padding:2px 8px;margin-right:6px" onclick="showPlayerSummaryDetail('${safeName}', this)">明細</button>${medal} ${p.name}</td>
       <td class="mono">${p.count}</td>
       <td class="mono">${Math.round(p.cost).toLocaleString()}</td>
       <td class="mono">${Math.round(p.prize).toLocaleString()}</td>
@@ -1346,7 +1345,7 @@ function renderSummaryLeaderboards(stats) {
   const singleRows = (rows) => rows.map((p, idx) => {
     const v = p.net;
     const cls = v>=0 ? 'pos' : 'neg';
-    return `<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${cls}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`;
+    return `<tr><td>${idx+1}</td><td>${p.name}</td><td style="white-space:nowrap;min-width:86px">${p.sessionName}</td><td class="${cls}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`;
   }).join('');
 
   box.innerHTML = `
@@ -1370,16 +1369,30 @@ function renderSummaryLeaderboards(stats) {
     </div>`;
 }
 
-function showPlayerSummaryDetail(name) {
+function showPlayerSummaryDetail(name, btn) {
   if(!lastSummaryStats) return;
   const p = lastSummaryStats.list.find(x=>x.name===name);
-  const box = document.getElementById('summary-player-detail');
-  if(!p || !box) return;
+  if(!p || !btn) return;
+
+  const currentRow = btn.closest('tr');
+  if(!currentRow) return;
+
+  const nextRow = currentRow.nextElementSibling;
+  if(nextRow && nextRow.classList.contains('summary-detail-row') && nextRow.dataset.player === name) {
+    nextRow.remove();
+    btn.textContent = '明細';
+    return;
+  }
+
+  document.querySelectorAll('.summary-detail-row').forEach(row => row.remove());
+  document.querySelectorAll('.summary-detail-btn').forEach(b => b.textContent = '明細');
+  btn.textContent = '收合';
+
   const rows = [...p.details].sort((a,b)=>new Date(a.date)-new Date(b.date)).map(d => {
     const cls = d.net>=0?'pos':'neg';
     return `<tr>
-      <td>${new Date(d.date).toLocaleDateString('zh-TW')}</td>
-      <td>${d.sessionName}</td>
+      <td style="white-space:nowrap">${new Date(d.date).toLocaleDateString('zh-TW')}</td>
+      <td style="white-space:nowrap;min-width:86px">${d.sessionName}</td>
       <td class="mono">${d.sets}</td>
       <td class="mono">${Math.round(d.cost).toLocaleString()}</td>
       <td class="mono">${Math.round(d.prize).toLocaleString()}</td>
@@ -1387,25 +1400,34 @@ function showPlayerSummaryDetail(name) {
       <td class="${cls}">${d.net>=0?'+':''}${Math.round(d.net).toLocaleString()}</td>
     </tr>`;
   }).join('');
-  const avg = p.count ? p.net/p.count : 0;
-  box.style.display = 'block';
-  box.innerHTML = `
-    <hr class="div">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
-      <div style="font-size:13px;font-weight:700">${p.name} 的場次明細</div>
-      <button class="btn sm ghost" onclick="document.getElementById('summary-player-detail').style.display='none'">收合</button>
-    </div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
-      共 ${p.count} 場，平均每場 <span class="${avg>=0?'pos':'neg'}">${avg>=0?'+':''}${Math.round(avg).toLocaleString()}</span>
-    </div>
-    <div style="overflow-x:auto">
-      <table class="rtable">
-        <thead><tr><th>日期</th><th>賽事</th><th>組數</th><th>費用</th><th>獎金</th><th>名次獎</th><th>淨收付</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-}
 
+  const avg = p.count ? p.net/p.count : 0;
+  const detailRow = document.createElement('tr');
+  detailRow.className = 'summary-detail-row';
+  detailRow.dataset.player = name;
+  detailRow.innerHTML = `
+    <td colspan="6" style="padding:0;border-bottom:1px solid var(--border)">
+      <div style="margin:8px 0 12px;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.025)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+          <div style="font-size:13px;font-weight:700">${p.name} 的場次明細</div>
+          <div style="font-size:12px;color:var(--muted)">
+            共 ${p.count} 場，平均每場 <span class="${avg>=0?'pos':'neg'}">${avg>=0?'+':''}${Math.round(avg).toLocaleString()}</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="rtable" style="min-width:620px">
+            <thead><tr>
+              <th style="white-space:nowrap">日期</th>
+              <th style="white-space:nowrap;min-width:86px">賽事</th>
+              <th>組數</th><th>費用</th><th>獎金</th><th>名次獎</th><th>淨收付</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    </td>`;
+  currentRow.after(detailRow);
+}
 function calcSummary() {
   const selected = getSelectedSummarySessions();
   if(!selected.length) { alert('請選擇至少一場賽事'); return; }
@@ -2330,7 +2352,7 @@ window.exportImage = async function() {
           <table class="rtable" style="width:100%">
             <thead><tr><th style="width:56px">名次</th><th style="width:90px">玩家</th><th>賽事</th><th style="width:140px">淨收付</th></tr></thead>
             <tbody>
-              ${rows.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}
+              ${rows.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td style="white-space:nowrap;min-width:86px">${p.sessionName}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}
             </tbody>
           </table>
         </div>
