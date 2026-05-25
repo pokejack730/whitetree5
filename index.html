@@ -1811,10 +1811,26 @@ window.exportImage = async function() {
     try {
       await waitForReady();
 
+      // 先把所有表格撐到它們真正需要的寬度，再做總寬度量測。
+      let widestTable = 0;
+      exportContent.querySelectorAll('table').forEach(table => {
+        const tableWidth = Math.max(table.scrollWidth || 0, table.offsetWidth || 0, width);
+        widestTable = Math.max(widestTable, tableWidth);
+        table.style.width = 'max-content';
+        table.style.minWidth = `${tableWidth}px`;
+      });
+
+      const desiredContentWidth = Math.max(width, widestTable ? widestTable + 72 : width);
+      exportContent.style.width = `${desiredContentWidth}px`;
+      exportContent.style.maxWidth = `${desiredContentWidth}px`;
+      exportContent.style.minWidth = `${desiredContentWidth}px`;
+
+      await waitForReady();
+
       // 有些明細表格原本藏在橫向捲動區，scrollWidth 不一定會把右側溢出的欄位算進去。
       // 這裡改用所有子元素的實際 bounding box 重新量一次，讓左右要拉的資料也會進圖。
       const baseRect = exportRoot.getBoundingClientRect();
-      let paintedRight = Math.max(exportRoot.scrollWidth, exportRoot.offsetWidth, width);
+      let paintedRight = Math.max(exportRoot.scrollWidth, exportRoot.offsetWidth, desiredContentWidth + 80);
       let paintedBottom = Math.max(exportRoot.scrollHeight, exportRoot.offsetHeight);
 
       exportRoot.querySelectorAll('*').forEach(el => {
@@ -1826,16 +1842,12 @@ window.exportImage = async function() {
         paintedRight = Math.max(paintedRight, el.scrollWidth || 0, el.offsetWidth || 0);
       });
 
-      const fullWidth = Math.ceil(paintedRight + 56);
+      const fullWidth = Math.ceil(Math.max(paintedRight + 36, desiredContentWidth + 120));
       const fullHeight = Math.ceil(paintedBottom + 28);
 
       exportRoot.style.width = `${fullWidth}px`;
       exportRoot.style.maxWidth = `${fullWidth}px`;
       exportRoot.style.minWidth = `${fullWidth}px`;
-      exportContent.querySelectorAll('table').forEach(table => {
-        table.style.width = 'max-content';
-        table.style.minWidth = `${Math.max(table.scrollWidth || 0, table.offsetWidth || 0, width)}px`;
-      });
 
       await waitForReady();
 
@@ -1918,7 +1930,9 @@ window.exportImage = async function() {
     if (btn) { btn.textContent = '⏳ 生成完整圖片...'; btn.disabled = true; }
     try {
       card.style.display = 'block';
-      const canvas = await renderFullElement(card, 680);
+      const table = card.querySelector('table');
+      const width = Math.max(760, card.scrollWidth || 680, table ? (table.scrollWidth || table.offsetWidth || 0) + 140 : 0);
+      const canvas = await renderFullElement(card, width);
       const sessionName = document.getElementById('s-name')?.value?.trim() || new Date().toLocaleDateString('zh-TW');
       const result = await shareOrDownloadCanvas(canvas, `poker_${safeFileName(sessionName)}.png`);
       if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
@@ -1964,7 +1978,9 @@ window.exportImage = async function() {
           </div>
         </div>`;
       exportSource.appendChild(wrap.cloneNode(true));
-      const width = Math.max(820, wrap.scrollWidth || 760);
+      const summaryTables = wrap.querySelectorAll('table');
+      const widestSummaryTable = Math.max(0, ...Array.from(summaryTables).map(t => Math.max(t.scrollWidth || 0, t.offsetWidth || 0)));
+      const width = Math.max(860, wrap.scrollWidth || 760, widestSummaryTable + 140);
       const canvas = await renderFullElement(exportSource, width);
       const result = await shareOrDownloadCanvas(canvas, `poker_summary_${checked}sessions.png`);
       if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
@@ -1988,7 +2004,7 @@ window.exportImage = async function() {
     if (btn) { btn.textContent = '⏳ 生成完整圖片...'; btn.disabled = true; }
     try {
       const table = box.querySelector('table');
-      const width = Math.max(680, box.scrollWidth || 680, table ? (table.scrollWidth || table.offsetWidth || 0) + 48 : 0);
+      const width = Math.max(760, box.scrollWidth || 680, table ? (table.scrollWidth || table.offsetWidth || 0) + 160 : 0);
       const canvas = await renderFullElement(box, width);
       const result = await shareOrDownloadCanvas(canvas, `poker_${safeFileName(s ? s.name : 'session')}.png`);
       if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
