@@ -1657,6 +1657,8 @@ window.exportImage = async function() {
 // 修正 html2canvas 只截到可視範圍的問題：先建立完整尺寸的匯出複本，再用 scrollHeight/scrollWidth 輸出整張長圖。
 (function(){
   const EXPORT_BG = '#161920';
+  const EXPORT_SHELL_PAD_X = 22;
+  const EXPORT_SHELL_PAD_Y = 24;
 
   function safeFileName(name) {
     return String(name || 'poker-session')
@@ -1688,18 +1690,18 @@ window.exportImage = async function() {
     const isSummary = source.id === 'summary-result';
     const isModal = source.id === 'modal-box';
     const isExportCard = source.id === 'export-card';
-    const shellPaddingX = 40;
-    const shellPaddingY = 28;
 
     const shell = document.createElement('div');
+    shell.dataset.padX = String(EXPORT_SHELL_PAD_X);
+    shell.dataset.padY = String(EXPORT_SHELL_PAD_Y);
     Object.assign(shell.style, {
       display: 'block',
       position: 'absolute',
       left: '0',
       top: '0',
-      width: `${width + shellPaddingX * 2}px`,
-      maxWidth: `${width + shellPaddingX * 2}px`,
-      minWidth: `${width + shellPaddingX * 2}px`,
+      width: `${width + EXPORT_SHELL_PAD_X * 2}px`,
+      maxWidth: `${width + EXPORT_SHELL_PAD_X * 2}px`,
+      minWidth: `${width + EXPORT_SHELL_PAD_X * 2}px`,
       height: 'auto',
       maxHeight: 'none',
       overflow: 'visible',
@@ -1707,7 +1709,7 @@ window.exportImage = async function() {
       zIndex: '-1',
       background: EXPORT_BG,
       boxSizing: 'border-box',
-      padding: `${shellPaddingY}px ${shellPaddingX}px ${shellPaddingY + 8}px`,
+      padding: `${EXPORT_SHELL_PAD_Y}px ${EXPORT_SHELL_PAD_X}px ${EXPORT_SHELL_PAD_Y + 6}px`,
       color: '#e8eaf0'
     });
 
@@ -1732,16 +1734,16 @@ window.exportImage = async function() {
       borderRadius: isSummary ? '0' : '22px',
       border: isSummary ? 'none' : '1px solid rgba(255,255,255,.08)',
       boxShadow: isSummary ? 'none' : '0 10px 28px rgba(0,0,0,.28)',
-      paddingRight: '18px',
-      paddingBottom: '12px'
+      paddingRight: '10px',
+      paddingBottom: '10px'
     });
 
     if (isModal) {
-      clone.style.padding = '24px 22px 28px';
+      clone.style.padding = '24px 18px 26px';
       clone.style.borderRadius = '22px';
     }
     if (isExportCard) {
-      clone.style.padding = '26px 28px 24px';
+      clone.style.padding = '24px 22px 22px';
       clone.style.borderRadius = '22px';
       clone.style.border = '1px solid rgba(255,255,255,.08)';
     }
@@ -1766,8 +1768,8 @@ window.exportImage = async function() {
       table.style.width = 'max-content';
       table.style.maxWidth = 'none';
     });
-    clone.querySelectorAll('th:first-child, td:first-child').forEach(el => el.style.paddingLeft = '14px');
-    clone.querySelectorAll('th:last-child, td:last-child').forEach(el => el.style.paddingRight = '28px');
+    clone.querySelectorAll('th:first-child, td:first-child').forEach(el => el.style.paddingLeft = '12px');
+    clone.querySelectorAll('th:last-child, td:last-child').forEach(el => el.style.paddingRight = '42px');
     clone.querySelectorAll('.btn-row').forEach(el => el.remove());
 
     // 解除內層橫向/縱向捲動限制，讓表格與內容完整攤開。
@@ -1808,29 +1810,31 @@ window.exportImage = async function() {
 
     const exportRoot = makeExportClone(source, width);
     const exportContent = exportRoot.firstElementChild || exportRoot;
+    const padX = +(exportRoot.dataset.padX || EXPORT_SHELL_PAD_X);
     try {
       await waitForReady();
 
-      // 先把所有表格撐到它們真正需要的寬度，再做總寬度量測。
+      // 先把所有表格撐到真正需要的寬度，並額外為最右欄預留安全空間。
       let widestTable = 0;
       exportContent.querySelectorAll('table').forEach(table => {
         const tableWidth = Math.max(table.scrollWidth || 0, table.offsetWidth || 0, width);
         widestTable = Math.max(widestTable, tableWidth);
         table.style.width = 'max-content';
-        table.style.minWidth = `${tableWidth}px`;
+        table.style.minWidth = `${tableWidth + 28}px`;
       });
 
-      const desiredContentWidth = Math.max(width, widestTable ? widestTable + 72 : width);
+      const desiredContentWidth = Math.max(width, widestTable ? widestTable + 84 : width);
       exportContent.style.width = `${desiredContentWidth}px`;
       exportContent.style.maxWidth = `${desiredContentWidth}px`;
       exportContent.style.minWidth = `${desiredContentWidth}px`;
+      exportRoot.style.width = `${desiredContentWidth + padX * 2}px`;
+      exportRoot.style.maxWidth = `${desiredContentWidth + padX * 2}px`;
+      exportRoot.style.minWidth = `${desiredContentWidth + padX * 2}px`;
 
       await waitForReady();
 
-      // 有些明細表格原本藏在橫向捲動區，scrollWidth 不一定會把右側溢出的欄位算進去。
-      // 這裡改用所有子元素的實際 bounding box 重新量一次，讓左右要拉的資料也會進圖。
       const baseRect = exportRoot.getBoundingClientRect();
-      let paintedRight = Math.max(exportRoot.scrollWidth, exportRoot.offsetWidth, desiredContentWidth + 80);
+      let paintedRight = Math.max(exportRoot.scrollWidth, exportRoot.offsetWidth, desiredContentWidth + padX * 2);
       let paintedBottom = Math.max(exportRoot.scrollHeight, exportRoot.offsetHeight);
 
       exportRoot.querySelectorAll('*').forEach(el => {
@@ -1842,8 +1846,8 @@ window.exportImage = async function() {
         paintedRight = Math.max(paintedRight, el.scrollWidth || 0, el.offsetWidth || 0);
       });
 
-      const fullWidth = Math.ceil(Math.max(paintedRight + 36, desiredContentWidth + 120));
-      const fullHeight = Math.ceil(paintedBottom + 28);
+      const fullWidth = Math.ceil(Math.max(paintedRight + 12, desiredContentWidth + padX * 2 + 16));
+      const fullHeight = Math.ceil(paintedBottom + 22);
 
       exportRoot.style.width = `${fullWidth}px`;
       exportRoot.style.maxWidth = `${fullWidth}px`;
@@ -1931,7 +1935,7 @@ window.exportImage = async function() {
     try {
       card.style.display = 'block';
       const table = card.querySelector('table');
-      const width = Math.max(760, card.scrollWidth || 680, table ? (table.scrollWidth || table.offsetWidth || 0) + 140 : 0);
+      const width = Math.max(740, card.scrollWidth || 680, table ? (table.scrollWidth || table.offsetWidth || 0) + 96 : 0);
       const canvas = await renderFullElement(card, width);
       const sessionName = document.getElementById('s-name')?.value?.trim() || new Date().toLocaleDateString('zh-TW');
       const result = await shareOrDownloadCanvas(canvas, `poker_${safeFileName(sessionName)}.png`);
@@ -1980,7 +1984,7 @@ window.exportImage = async function() {
       exportSource.appendChild(wrap.cloneNode(true));
       const summaryTables = wrap.querySelectorAll('table');
       const widestSummaryTable = Math.max(0, ...Array.from(summaryTables).map(t => Math.max(t.scrollWidth || 0, t.offsetWidth || 0)));
-      const width = Math.max(860, wrap.scrollWidth || 760, widestSummaryTable + 140);
+      const width = Math.max(800, wrap.scrollWidth || 760, widestSummaryTable + 96);
       const canvas = await renderFullElement(exportSource, width);
       const result = await shareOrDownloadCanvas(canvas, `poker_summary_${checked}sessions.png`);
       if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
@@ -2004,7 +2008,7 @@ window.exportImage = async function() {
     if (btn) { btn.textContent = '⏳ 生成完整圖片...'; btn.disabled = true; }
     try {
       const table = box.querySelector('table');
-      const width = Math.max(760, box.scrollWidth || 680, table ? (table.scrollWidth || table.offsetWidth || 0) + 160 : 0);
+      const width = Math.max(740, box.scrollWidth || 680, table ? (table.scrollWidth || table.offsetWidth || 0) + 96 : 0);
       const canvas = await renderFullElement(box, width);
       const result = await shareOrDownloadCanvas(canvas, `poker_${safeFileName(s ? s.name : 'session')}.png`);
       if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
