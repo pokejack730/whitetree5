@@ -340,9 +340,33 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
 <div id="page-summary" class="page">
   <div class="card">
     <div class="card-title">選擇要統計的場次</div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn sm" onclick="setSummaryQuickFilter('all')">全部</button>
+      <button class="btn sm" onclick="setSummaryQuickFilter('thisMonth')">本月</button>
+      <button class="btn sm" onclick="setSummaryQuickFilter('lastMonth')">上月</button>
+      <button class="btn sm" onclick="setSummaryQuickFilter('last7')">近 7 天</button>
+      <button class="btn sm" onclick="setSummaryQuickFilter('last30')">近 30 天</button>
+    </div>
+
+    <div class="form-row" style="margin-bottom:10px">
+      <div class="form-group">
+        <label>開始日期</label>
+        <input type="date" id="sum-date-from" onchange="applySummaryDateFilter()">
+      </div>
+      <div class="form-group">
+        <label>結束日期</label>
+        <input type="date" id="sum-date-to" onchange="applySummaryDateFilter()">
+      </div>
+      <div class="form-group" style="flex:0 0 auto;min-width:auto;justify-content:flex-end">
+        <button class="btn sm" onclick="applySummaryDateFilter()">套用日期</button>
+      </div>
+    </div>
+
     <div class="btn-row" style="margin-bottom:10px">
-      <button class="btn sm" onclick="selectAll(true)">全選</button>
+      <button class="btn sm" onclick="selectAll(true)">全選目前列表</button>
       <button class="btn sm" onclick="selectAll(false)">取消全選</button>
+      <span id="sum-filter-info" style="font-size:12px;color:var(--muted);font-family:var(--mono);align-self:center"></span>
     </div>
     <div id="session-select"></div>
   </div>
@@ -360,6 +384,11 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
         </tr></thead>
         <tbody id="sum-tbody"></tbody>
       </table>
+      <div id="summary-player-detail" style="display:none;margin-top:14px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">玩家排行榜</div>
+      <div id="summary-leaderboards"></div>
     </div>
     <div class="card">
       <div class="card-title">名次榮譽榜</div>
@@ -555,6 +584,8 @@ try {
 let players = [{name:'Jky',sets:1,chips:'',rank:''},{name:'雲',sets:1,chips:'',rank:''},{name:'眼',sets:1,chips:'',rank:''},{name:'建',sets:1,chips:'',rank:''}];
 let sessions = [];
 let lastResult = null;
+let summaryFilter = { mode:'all', from:'', to:'' };
+let lastSummaryStats = null;
 
 // ─── FIREBASE SYNC: 即時監聽資料庫變化 ───
 function initFirebase() {
@@ -1080,11 +1111,94 @@ async function clearAll() {
 }
 
 // ─── SESSION SELECT ───
+function toDateInputValue(d) {
+  if(!d) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseSessionDate(s) {
+  const d = new Date(s.date);
+  return isNaN(d) ? null : d;
+}
+
+function getSummaryDateRangeLabel(from, to) {
+  if(!from && !to) return '全部賽事';
+  if(from && to) return `${from} ～ ${to}`;
+  if(from) return `${from} 之後`;
+  return `${to} 之前`;
+}
+
+function setSummaryQuickFilter(mode) {
+  summaryFilter.mode = mode;
+  const now = new Date();
+  let from = '', to = '';
+
+  if(mode === 'thisMonth') {
+    from = toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1));
+    to = toDateInputValue(new Date(now.getFullYear(), now.getMonth()+1, 0));
+  } else if(mode === 'lastMonth') {
+    from = toDateInputValue(new Date(now.getFullYear(), now.getMonth()-1, 1));
+    to = toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 0));
+  } else if(mode === 'last7') {
+    const d = new Date(now); d.setDate(d.getDate()-6);
+    from = toDateInputValue(d);
+    to = toDateInputValue(now);
+  } else if(mode === 'last30') {
+    const d = new Date(now); d.setDate(d.getDate()-29);
+    from = toDateInputValue(d);
+    to = toDateInputValue(now);
+  }
+
+  summaryFilter.from = from;
+  summaryFilter.to = to;
+  const fromEl = document.getElementById('sum-date-from');
+  const toEl = document.getElementById('sum-date-to');
+  if(fromEl) fromEl.value = from;
+  if(toEl) toEl.value = to;
+  renderSessionSelect();
+}
+
+function applySummaryDateFilter() {
+  summaryFilter.mode = 'custom';
+  summaryFilter.from = document.getElementById('sum-date-from')?.value || '';
+  summaryFilter.to = document.getElementById('sum-date-to')?.value || '';
+  renderSessionSelect();
+}
+
+function getFilteredSummarySessions() {
+  const from = summaryFilter.from ? new Date(summaryFilter.from + 'T00:00:00') : null;
+  const to = summaryFilter.to ? new Date(summaryFilter.to + 'T23:59:59') : null;
+  return sessions.filter(s => {
+    const d = parseSessionDate(s);
+    if(!d) return true;
+    if(from && d < from) return false;
+    if(to && d > to) return false;
+    return true;
+  });
+}
+
 function renderSessionSelect() {
   const div = document.getElementById('session-select');
-  document.getElementById('summary-result').style.display='none';
-  if(!sessions.length) { div.innerHTML='<div class="empty"><div class="empty-icon">📋</div>尚無賽事可統計</div>'; return; }
-  div.innerHTML = [...sessions].reverse().map(s => {
+  const result = document.getElementById('summary-result');
+  if(result) result.style.display='none';
+
+  const filtered = getFilteredSummarySessions();
+  const info = document.getElementById('sum-filter-info');
+  if(info) info.textContent = `${getSummaryDateRangeLabel(summaryFilter.from, summaryFilter.to)} ｜ ${filtered.length} 場`;
+
+  if(!sessions.length) {
+    div.innerHTML='<div class="empty"><div class="empty-icon">📋</div>尚無賽事可統計</div>';
+    return;
+  }
+  if(!filtered.length) {
+    div.innerHTML='<div class="empty"><div class="empty-icon">🔎</div>此日期範圍內沒有賽事</div>';
+    return;
+  }
+
+  div.innerHTML = [...filtered].reverse().map(s => {
     return `<div class="chk-row">
       <input type="checkbox" id="chk-${s.id}" checked>
       <label for="chk-${s.id}">${s.name}</label>
@@ -1107,6 +1221,7 @@ function buildSummaryStats(selected, opts = {}) {
   const includeSettlement = !!opts.includeSettlement;
   const map = {};
   let totalVenue=0, totalChips=0, totalTable=0;
+  const singleRows = [];
 
   selected.forEach(s => {
     const b=s.buyin, ts=s.players.reduce((a,p)=>a+p.sets,0);
@@ -1115,18 +1230,32 @@ function buildSummaryStats(selected, opts = {}) {
     totalTable += (FEE.table[b]||0)*ts;
     s.players.forEach(p => {
       if(!p.name) return;
-      if(!map[p.name]) map[p.name]={name:p.name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0,settlementAmount:0,settlementType:''};
+      if(!map[p.name]) map[p.name]={name:p.name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0,settlementAmount:0,settlementType:'',details:[]};
       const m = map[p.name];
       m.count++; m.cost+=p.cost; m.prize+=p.prize; m.rp+=p.rankPrize; m.net+=p.net;
       if(p.rankNum===1) m.r1++;
       if(p.rankNum===2) m.r2++;
       if(p.rankNum===3) m.r3++;
+      const detail = {
+        sessionId:s.id,
+        sessionName:s.name,
+        date:s.date,
+        buyin:s.buyin,
+        sets:p.sets,
+        cost:p.cost,
+        prize:p.prize,
+        rp:p.rankPrize,
+        net:p.net,
+        rankNum:p.rankNum || ''
+      };
+      m.details.push(detail);
+      singleRows.push({name:p.name, ...detail});
     });
   });
 
   if (includeSettlement) {
     const ensure = (name) => {
-      if(!map[name]) map[name]={name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0,settlementAmount:0,settlementType:''};
+      if(!map[name]) map[name]={name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0,settlementAmount:0,settlementType:'',details:[]};
       return map[name];
     };
     const venueReceiver = ensure('眼');
@@ -1150,6 +1279,14 @@ function buildSummaryStats(selected, opts = {}) {
     .filter(p=>p.r1+p.r2+p.r3>0)
     .sort((a,b)=>(b.r1*3+b.r2*2+b.r3)-(a.r1*3+a.r2*2+a.r3));
 
+  const leaderboards = {
+    topProfit: [...list].sort((a,b)=>b.net-a.net).slice(0,5),
+    topLoss: [...list].sort((a,b)=>a.net-b.net).slice(0,5),
+    avgNet: [...list].filter(p=>p.count>0).sort((a,b)=>(b.net/b.count)-(a.net/a.count)).slice(0,5),
+    bestSingle: [...singleRows].sort((a,b)=>b.net-a.net).slice(0,5),
+    worstSingle: [...singleRows].sort((a,b)=>a.net-b.net).slice(0,5)
+  };
+
   return {
     totalVenue,
     totalChips,
@@ -1157,19 +1294,26 @@ function buildSummaryStats(selected, opts = {}) {
     totalPools: totalVenue + totalChips + totalTable,
     includeSettlement,
     list,
-    rankList
+    rankList,
+    singleRows,
+    leaderboards
   };
 }
 
 function renderSummaryStatsToDom(stats) {
+  lastSummaryStats = stats;
+  const detail = document.getElementById('summary-player-detail');
+  if(detail) { detail.style.display='none'; detail.innerHTML=''; }
+
   document.getElementById('sum-pools').innerHTML =
     `場地池合計 <b style="color:var(--text)">${stats.totalVenue}</b> ／ 籌碼池合計 <b style="color:var(--text)">${stats.totalChips}</b> ／ 桌池合計 <b style="color:var(--text)">${stats.totalTable}</b> ／ 總計 <b style="color:var(--accent)">${stats.totalPools}</b>`;
 
   document.getElementById('sum-tbody').innerHTML = stats.list.map((p,idx) => {
     const nc = p.net>=0?'pos':'neg';
     const medal = idx===0?'🥇':idx===1?'🥈':idx===2?'🥉':'';
+    const safeName = String(p.name).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     return `<tr>
-      <td>${medal} ${p.name}</td>
+      <td><button class="btn sm" style="padding:2px 8px;margin-right:6px" onclick="showPlayerSummaryDetail('${safeName}')">明細</button>${medal} ${p.name}</td>
       <td class="mono">${p.count}</td>
       <td class="mono">${Math.round(p.cost).toLocaleString()}</td>
       <td class="mono">${Math.round(p.prize).toLocaleString()}</td>
@@ -1186,6 +1330,81 @@ function renderSummaryStatsToDom(stats) {
       <td><span style="color:var(--bronze)">${p.r3>0?p.r3+'次':'-'}</span></td>
       <td class="mono">${p.r1+p.r2+p.r3}次</td>
     </tr>`).join('');
+
+  renderSummaryLeaderboards(stats);
+}
+
+function renderSummaryLeaderboards(stats) {
+  const box = document.getElementById('summary-leaderboards');
+  if(!box) return;
+
+  const simpleRows = (rows, valueFn) => rows.map((p, idx) => {
+    const v = valueFn(p);
+    const cls = v>=0 ? 'pos' : 'neg';
+    return `<tr><td>${idx+1}</td><td>${p.name}</td><td class="${cls}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`;
+  }).join('');
+
+  const singleRows = (rows) => rows.map((p, idx) => {
+    const v = p.net;
+    const cls = v>=0 ? 'pos' : 'neg';
+    return `<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${cls}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+      <div style="overflow-x:auto">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">總盈利王</div>
+        <table class="rtable"><tbody>${simpleRows(stats.leaderboards.topProfit, p=>p.net)}</tbody></table>
+      </div>
+      <div style="overflow-x:auto">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">平均每場淨收付</div>
+        <table class="rtable"><tbody>${simpleRows(stats.leaderboards.avgNet, p=>p.count ? p.net/p.count : 0)}</tbody></table>
+      </div>
+      <div style="overflow-x:auto">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最高單場盈利</div>
+        <table class="rtable"><tbody>${singleRows(stats.leaderboards.bestSingle)}</tbody></table>
+      </div>
+      <div style="overflow-x:auto">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最大單場虧損</div>
+        <table class="rtable"><tbody>${singleRows(stats.leaderboards.worstSingle)}</tbody></table>
+      </div>
+    </div>`;
+}
+
+function showPlayerSummaryDetail(name) {
+  if(!lastSummaryStats) return;
+  const p = lastSummaryStats.list.find(x=>x.name===name);
+  const box = document.getElementById('summary-player-detail');
+  if(!p || !box) return;
+  const rows = [...p.details].sort((a,b)=>new Date(a.date)-new Date(b.date)).map(d => {
+    const cls = d.net>=0?'pos':'neg';
+    return `<tr>
+      <td>${new Date(d.date).toLocaleDateString('zh-TW')}</td>
+      <td>${d.sessionName}</td>
+      <td class="mono">${d.sets}</td>
+      <td class="mono">${Math.round(d.cost).toLocaleString()}</td>
+      <td class="mono">${Math.round(d.prize).toLocaleString()}</td>
+      <td class="mono">${Math.round(d.rp).toLocaleString()}</td>
+      <td class="${cls}">${d.net>=0?'+':''}${Math.round(d.net).toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+  const avg = p.count ? p.net/p.count : 0;
+  box.style.display = 'block';
+  box.innerHTML = `
+    <hr class="div">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:700">${p.name} 的場次明細</div>
+      <button class="btn sm ghost" onclick="document.getElementById('summary-player-detail').style.display='none'">收合</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+      共 ${p.count} 場，平均每場 <span class="${avg>=0?'pos':'neg'}">${avg>=0?'+':''}${Math.round(avg).toLocaleString()}</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="rtable">
+        <thead><tr><th>日期</th><th>賽事</th><th>組數</th><th>費用</th><th>獎金</th><th>名次獎</th><th>淨收付</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 function calcSummary() {
@@ -2061,6 +2280,27 @@ window.exportImage = async function() {
           </tbody>
         </table>
         ${includeSettlement ? `<div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.6">註：淨收付欄位中的 <span style="color:var(--text)">+結算</span>，代表該玩家已加計對應的場地池 / 籌碼池 / 桌池金額。</div>` : ''}
+      </div>
+      <div class="card">
+        <div class="card-title">玩家排行榜</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+          <div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">總盈利王</div>
+            <table class="rtable"><tbody>${stats.leaderboards.topProfit.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}</tbody></table>
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">平均每場淨收付</div>
+            <table class="rtable"><tbody>${stats.leaderboards.avgNet.map((p,idx)=>{ const v=p.count?p.net/p.count:0; return `<tr><td>${idx+1}</td><td>${p.name}</td><td class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`; }).join('')}</tbody></table>
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最高單場盈利</div>
+            <table class="rtable"><tbody>${stats.leaderboards.bestSingle.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}</tbody></table>
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最大單場虧損</div>
+            <table class="rtable"><tbody>${stats.leaderboards.worstSingle.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}</tbody></table>
+          </div>
+        </div>
       </div>
       <div class="card">
         <div class="card-title">名次榮譽榜</div>
