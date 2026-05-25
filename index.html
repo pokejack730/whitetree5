@@ -402,6 +402,7 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
     <div class="btn-row">
       <button class="btn" id="btn-export-summary" onclick="exportSummaryImage()">📸 導出統計圖片</button>
       <button class="btn" id="btn-export-summary-settlement" onclick="exportSummaryImageWithSettlement()">📸 導出含場地/籌碼/桌統計結算</button>
+      <button class="btn" id="btn-export-leaderboards" onclick="exportSummaryLeaderboardsImage()">🏆 導出結算玩家排行榜</button>
     </div>
   </div>
 </div>
@@ -1186,27 +1187,25 @@ function renderSessionSelect() {
   if(result) result.style.display='none';
 
   const filtered = getFilteredSummarySessions();
+  const selectedIds = new Set(filtered.map(s => String(s.id)));
   const info = document.getElementById('sum-filter-info');
-  if(info) info.textContent = `${getSummaryDateRangeLabel(summaryFilter.from, summaryFilter.to)} ｜ ${filtered.length} 場`;
+  if(info) info.textContent = `${getSummaryDateRangeLabel(summaryFilter.from, summaryFilter.to)} ｜ 已勾選 ${filtered.length} / 全部 ${sessions.length} 場`;
 
   if(!sessions.length) {
     div.innerHTML='<div class="empty"><div class="empty-icon">📋</div>尚無賽事可統計</div>';
     return;
   }
-  if(!filtered.length) {
-    div.innerHTML='<div class="empty"><div class="empty-icon">🔎</div>此日期範圍內沒有賽事</div>';
-    return;
-  }
 
-  div.innerHTML = [...filtered].reverse().map(s => {
-    return `<div class="chk-row">
-      <input type="checkbox" id="chk-${s.id}" checked>
+  div.innerHTML = [...sessions].reverse().map(s => {
+    const isChecked = selectedIds.has(String(s.id));
+    const isOut = !isChecked;
+    return `<div class="chk-row" style="${isOut?'opacity:.42':''}">
+      <input type="checkbox" id="chk-${s.id}" ${isChecked?'checked':''}>
       <label for="chk-${s.id}">${s.name}</label>
-      <span class="chk-meta">${new Date(s.date).toLocaleDateString('zh-TW')} ｜ $${s.buyin} ｜ ${s.players.length}人</span>
+      <span class="chk-meta">${new Date(s.date).toLocaleDateString('zh-TW')} ｜ $${s.buyin} ｜ ${s.players.length}人${isOut?' ｜ 未在篩選範圍':''}</span>
     </div>`;
   }).join('');
 }
-
 function selectAll(v) { document.querySelectorAll('#session-select input[type=checkbox]').forEach(c=>c.checked=v); }
 
 // ─── SUMMARY ───
@@ -2282,27 +2281,6 @@ window.exportImage = async function() {
         ${includeSettlement ? `<div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.6">註：淨收付欄位中的 <span style="color:var(--text)">+結算</span>，代表該玩家已加計對應的場地池 / 籌碼池 / 桌池金額。</div>` : ''}
       </div>
       <div class="card">
-        <div class="card-title">玩家排行榜</div>
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
-          <div>
-            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">總盈利王</div>
-            <table class="rtable"><tbody>${stats.leaderboards.topProfit.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}</tbody></table>
-          </div>
-          <div>
-            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">平均每場淨收付</div>
-            <table class="rtable"><tbody>${stats.leaderboards.avgNet.map((p,idx)=>{ const v=p.count?p.net/p.count:0; return `<tr><td>${idx+1}</td><td>${p.name}</td><td class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`; }).join('')}</tbody></table>
-          </div>
-          <div>
-            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最高單場盈利</div>
-            <table class="rtable"><tbody>${stats.leaderboards.bestSingle.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}</tbody></table>
-          </div>
-          <div>
-            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最大單場虧損</div>
-            <table class="rtable"><tbody>${stats.leaderboards.worstSingle.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}</tbody></table>
-          </div>
-        </div>
-      </div>
-      <div class="card">
         <div class="card-title">名次榮譽榜</div>
         <table class="rtable">
           <thead><tr>
@@ -2321,6 +2299,84 @@ window.exportImage = async function() {
       </div>`;
     return exportSource;
   }
+
+
+  function buildLeaderboardsExportSource(selectedSessions, stats) {
+    const exportSource = document.createElement('div');
+    const dateList = selectedSessions.map(s => new Date(s.date)).filter(d => !isNaN(d));
+    const minDate = dateList.length ? new Date(Math.min(...dateList.map(d => d.getTime()))) : null;
+    const maxDate = dateList.length ? new Date(Math.max(...dateList.map(d => d.getTime()))) : null;
+    const dateText = minDate && maxDate
+      ? `${minDate.toLocaleDateString('zh-TW')} ～ ${maxDate.toLocaleDateString('zh-TW')}`
+      : new Date().toLocaleDateString('zh-TW');
+
+    const simpleTable = (title, rows, valueFn) => `
+      <div class="card">
+        <div class="card-title">${title}</div>
+        <table class="rtable">
+          <thead><tr><th>名次</th><th>玩家</th><th>數值</th></tr></thead>
+          <tbody>
+            ${rows.map((p,idx)=>{ const v=valueFn(p); return `<tr><td>${idx+1}</td><td>${p.name}</td><td class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${Math.round(v).toLocaleString()}</td></tr>`; }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    const singleTable = (title, rows) => `
+      <div class="card">
+        <div class="card-title">${title}</div>
+        <table class="rtable">
+          <thead><tr><th>名次</th><th>玩家</th><th>賽事</th><th>淨收付</th></tr></thead>
+          <tbody>
+            ${rows.map((p,idx)=>`<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.sessionName}</td><td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    exportSource.innerHTML = `
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px">結算玩家排行榜</div>
+            <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">${dateText}</div>
+            <div style="margin-top:8px;font-size:12px;color:var(--muted);line-height:1.6">
+              此排行榜已套用結算：場地池 ${stats.totalVenue} → 眼，籌碼池 ${stats.totalChips} → Jky，桌池 ${stats.totalTable} → 雲。
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">共選擇 <span style="color:var(--accent);font-weight:700">${selectedSessions.length}</span> 場賽事</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px">
+        ${simpleTable('總盈利王', stats.leaderboards.topProfit, p=>p.net)}
+        ${simpleTable('平均每場淨收付', stats.leaderboards.avgNet, p=>p.count ? p.net/p.count : 0)}
+        ${singleTable('最高單場盈利', stats.leaderboards.bestSingle)}
+        ${singleTable('最大單場虧損', stats.leaderboards.worstSingle)}
+      </div>`;
+    return exportSource;
+  }
+
+  window.exportSummaryLeaderboardsImage = async function() {
+    const btn = document.getElementById('btn-export-leaderboards');
+    const selectedSessions = getSelectedSummarySessions();
+    if (!selectedSessions.length) return showToast('請先選擇並計算多場統計');
+
+    if (btn) { btn.textContent = '⏳ 生成排行榜圖片...'; btn.disabled = true; }
+    try {
+      const stats = buildSummaryStats(selectedSessions, { includeSettlement: true });
+      const exportSource = buildLeaderboardsExportSource(selectedSessions, stats);
+      const width = 860;
+      const canvas = await renderFullElement(exportSource, width);
+      const result = await shareOrDownloadCanvas(canvas, `poker_leaderboards_settlement_${selectedSessions.length}sessions.png`);
+      if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
+      else if (result.method === 'cancel') showToast('已取消分享');
+      else showToast('結算排行榜圖片已下載！');
+    } catch(e) {
+      console.error('exportSummaryLeaderboardsImage failed:', e);
+      showToast('導出失敗，請重試');
+    } finally {
+      if (btn) { btn.textContent = '🏆 導出結算玩家排行榜'; btn.disabled = false; }
+    }
+  };
 
   window.exportSummaryImageWithSettlement = async function() {
     const btn = document.getElementById('btn-export-summary-settlement');
