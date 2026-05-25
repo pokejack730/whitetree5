@@ -384,7 +384,6 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
         </tr></thead>
         <tbody id="sum-tbody"></tbody>
       </table>
-      <div id="summary-player-detail" style="display:none;margin-top:14px"></div>
     </div>
     <div class="card">
       <div class="card-title">玩家排行榜</div>
@@ -451,14 +450,15 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div id="settings-players-list" style="margin-bottom:16px"></div>
 
-    <div class="card-title" style="margin-bottom:8px">資料備份</div>
+    <!-- Backup -->
+    <div class="card-title">資料備份</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
       <button class="btn sm" onclick="exportBackupJSON()">⬇️ 匯出全部資料</button>
       <button class="btn sm" onclick="document.getElementById('backup-import-file').click()">⬆️ 匯入備份</button>
       <input id="backup-import-file" type="file" accept="application/json,.json" style="display:none" onchange="importBackupJSON(event)">
     </div>
     <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:16px">
-      建議每隔一段時間匯出一份 JSON 備份。匯入時會先詢問確認，並用檔案內的賽事資料覆蓋目前清單。
+      建議每隔一段時間匯出一次備份。匯入備份會以檔案內容覆蓋目前雲端賽事資料。
     </div>
 
     <button class="btn" onclick="closeSettings()" style="width:100%">完成</button>
@@ -1023,9 +1023,49 @@ function ensureUsername(){
 }
 
 // ─── SAVE SESSION ───
+function getSessionWarnings(session) {
+  const warnings = [];
+  if(!session || !session.players || !session.players.length) return ['沒有玩家資料'];
+
+  const buyin = +session.buyin;
+  const cps = +(session.cps || 30000);
+  const totalSets = session.players.reduce((a,p)=>a+(+p.sets||0),0);
+  const expectedChips = totalSets * cps;
+  const filledChips = session.players.reduce((a,p)=>a+(+p.chips||0),0);
+  const chipDiff = filledChips - expectedChips;
+
+  if(chipDiff !== 0) {
+    warnings.push(`籌碼總數不一致：應有 ${expectedChips.toLocaleString()}，已填 ${filledChips.toLocaleString()}，差額 ${chipDiff>0?'+':''}${chipDiff.toLocaleString()}`);
+  }
+
+  const totalCost = session.players.reduce((a,p)=>a+(+p.cost||0),0);
+  const totalPrize = session.players.reduce((a,p)=>a+(+p.prize||0),0);
+  const totalRankPrize = session.players.reduce((a,p)=>a+(+p.rankPrize||0),0);
+  const venuePool = (FEE.venue[buyin]||0) * totalSets;
+  const chipsPool = (FEE.chips[buyin]||0) * totalSets;
+  const tablePool = (FEE.table[buyin]||0) * totalSets;
+  const moneyDiff = totalCost - totalPrize - totalRankPrize - venuePool - chipsPool - tablePool;
+
+  if(Math.abs(moneyDiff) > totalSets) {
+    warnings.push(`費用驗算差額偏大：${moneyDiff>0?'+':''}${moneyDiff.toLocaleString()}（通常應接近 0，允許少量無條件捨去誤差）`);
+  }
+
+  const emptyNames = session.players.filter(p=>!String(p.name||'').trim()).length;
+  if(emptyNames) warnings.push(`有 ${emptyNames} 筆玩家名稱空白`);
+
+  return warnings;
+}
+
+function confirmSessionWarnings(session) {
+  const warnings = getSessionWarnings(session);
+  if(!warnings.length) return true;
+  return confirm('⚠️ 儲存前提醒：\n\n' + warnings.map((w,i)=>`${i+1}. ${w}`).join('\n') + '\n\n仍要儲存這場紀錄嗎？');
+}
+
 async function saveSession() {
   if(!lastResult) return;
   if(!ensureUsername()) return;
+  if(!confirmSessionWarnings(lastResult)) return;
   const exists = sessions.findIndex(s=>s.id===lastResult.id);
   if(exists>=0 && !confirm('此場次已儲存過，是否覆蓋？')) return;
   lastResult.savedBy = getUsername();
@@ -1211,7 +1251,7 @@ function renderSessionSelect() {
     const isOut = !isChecked;
     return `<div class="chk-row" style="${isOut?'opacity:.42':''}">
       <input type="checkbox" id="chk-${s.id}" ${isChecked?'checked':''}>
-      <label for="chk-${s.id}">${s.name}</label>
+      <label for="chk-${s.id}" style="white-space:nowrap;min-width:72px;flex:0 0 auto">${s.name}</label>
       <span class="chk-meta">${new Date(s.date).toLocaleDateString('zh-TW')} ｜ $${s.buyin} ｜ ${s.players.length}人${isOut?' ｜ 未在篩選範圍':''}</span>
     </div>`;
   }).join('');
@@ -1323,7 +1363,7 @@ function renderSummaryStatsToDom(stats) {
     const medal = idx===0?'🥇':idx===1?'🥈':idx===2?'🥉':'';
     const safeName = String(p.name).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     return `<tr>
-      <td><button class="btn sm" style="padding:2px 8px;margin-right:6px" onclick="showPlayerSummaryDetail('${safeName}')">明細</button>${medal} ${p.name}</td>
+      <td><button class="btn sm summary-detail-btn" style="padding:2px 8px;margin-right:6px" onclick="showPlayerSummaryDetail('${safeName}', this)">明細</button>${medal} ${p.name}</td>
       <td class="mono">${p.count}</td>
       <td class="mono">${Math.round(p.cost).toLocaleString()}</td>
       <td class="mono">${Math.round(p.prize).toLocaleString()}</td>
@@ -1385,16 +1425,30 @@ function renderSummaryLeaderboards(stats) {
     </div>`;
 }
 
-function showPlayerSummaryDetail(name) {
+function showPlayerSummaryDetail(name, btn) {
   if(!lastSummaryStats) return;
   const p = lastSummaryStats.list.find(x=>x.name===name);
-  const box = document.getElementById('summary-player-detail');
-  if(!p || !box) return;
+  if(!p || !btn) return;
+
+  const currentRow = btn.closest('tr');
+  if(!currentRow) return;
+
+  const nextRow = currentRow.nextElementSibling;
+  if(nextRow && nextRow.classList.contains('summary-detail-row') && nextRow.dataset.player === name) {
+    nextRow.remove();
+    btn.textContent = '明細';
+    return;
+  }
+
+  document.querySelectorAll('.summary-detail-row').forEach(row => row.remove());
+  document.querySelectorAll('.summary-detail-btn').forEach(b => b.textContent = '明細');
+  btn.textContent = '收合';
+
   const rows = [...p.details].sort((a,b)=>new Date(a.date)-new Date(b.date)).map(d => {
     const cls = d.net>=0?'pos':'neg';
     return `<tr>
-      <td>${new Date(d.date).toLocaleDateString('zh-TW')}</td>
-      <td>${d.sessionName}</td>
+      <td style="white-space:nowrap">${new Date(d.date).toLocaleDateString('zh-TW')}</td>
+      <td style="white-space:nowrap;min-width:86px">${d.sessionName}</td>
       <td class="mono">${d.sets}</td>
       <td class="mono">${Math.round(d.cost).toLocaleString()}</td>
       <td class="mono">${Math.round(d.prize).toLocaleString()}</td>
@@ -1402,25 +1456,34 @@ function showPlayerSummaryDetail(name) {
       <td class="${cls}">${d.net>=0?'+':''}${Math.round(d.net).toLocaleString()}</td>
     </tr>`;
   }).join('');
-  const avg = p.count ? p.net/p.count : 0;
-  box.style.display = 'block';
-  box.innerHTML = `
-    <hr class="div">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
-      <div style="font-size:13px;font-weight:700">${p.name} 的場次明細</div>
-      <button class="btn sm ghost" onclick="document.getElementById('summary-player-detail').style.display='none'">收合</button>
-    </div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
-      共 ${p.count} 場，平均每場 <span class="${avg>=0?'pos':'neg'}">${avg>=0?'+':''}${Math.round(avg).toLocaleString()}</span>
-    </div>
-    <div style="overflow-x:auto">
-      <table class="rtable">
-        <thead><tr><th>日期</th><th>賽事</th><th>組數</th><th>費用</th><th>獎金</th><th>名次獎</th><th>淨收付</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-}
 
+  const avg = p.count ? p.net/p.count : 0;
+  const detailRow = document.createElement('tr');
+  detailRow.className = 'summary-detail-row';
+  detailRow.dataset.player = name;
+  detailRow.innerHTML = `
+    <td colspan="6" style="padding:0;border-bottom:1px solid var(--border)">
+      <div style="margin:8px 0 12px;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.025)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700">${p.name} 的場次明細</div>
+          <div style="font-size:12px;color:var(--muted)">
+            共 ${p.count} 場，總買入 ${p.buyins||0} 組，平均每場 <span class="${avg>=0?'pos':'neg'}">${avg>=0?'+':''}${Math.round(avg).toLocaleString()}</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="rtable" style="min-width:620px">
+            <thead><tr>
+              <th style="white-space:nowrap">日期</th>
+              <th style="white-space:nowrap;min-width:86px">賽事</th>
+              <th>組數</th><th>費用</th><th>獎金</th><th>名次獎</th><th>淨收付</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    </td>`;
+  currentRow.after(detailRow);
+}
 function calcSummary() {
   const selected = getSelectedSummarySessions();
   if(!selected.length) { alert('請選擇至少一場賽事'); return; }
@@ -1727,6 +1790,85 @@ function removeSettingPlayer(i) {
 function persist() {
   try { localStorage.setItem('poker_sessions', JSON.stringify(sessions)); } catch(e){}
 }
+function safeJSONFileName(name) {
+  return String(name || 'whitetree5_backup')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '_')
+    .slice(0, 80) || 'whitetree5_backup';
+}
+
+function exportBackupJSON() {
+  const payload = {
+    app: 'whitetree5-poker-tracker',
+    version: 'backup-v1',
+    exportedAt: new Date().toISOString(),
+    exportedBy: getUsername() || '',
+    sessions,
+    players: getPlayerList()
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeJSONFileName('whitetree5_backup_'+new Date().toISOString().slice(0,10))}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1500);
+  showToast('已匯出備份檔');
+}
+
+async function importBackupJSON(event) {
+  const input = event?.target;
+  const file = input?.files?.[0];
+  if(!file) return;
+
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const importedSessions = Array.isArray(data) ? data : data.sessions;
+    if(!Array.isArray(importedSessions)) throw new Error('備份格式不正確');
+
+    const cleaned = importedSessions
+      .filter(s => s && s.id && Array.isArray(s.players))
+      .map(s => ({...s}));
+
+    if(!cleaned.length) throw new Error('備份內沒有可匯入的賽事');
+
+    const msg = `即將以備份檔覆蓋目前所有賽事資料。\\n\\n目前：${sessions.length} 場\\n備份：${cleaned.length} 場\\n\\n確定要匯入嗎？`;
+    if(!confirm(msg)) return;
+
+    sessions = cleaned.sort((a,b)=>String(a.date||'')>String(b.date||'')?1:-1);
+    persist();
+
+    if(data.players && Array.isArray(data.players)) {
+      localStorage.setItem('poker_player_list', JSON.stringify(data.players));
+    }
+
+    if(sessionsRef && (!auth || (auth.currentUser && auth.currentUser.uid === ALLOWED_UID))) {
+      showSyncStatus('saving');
+      const obj = {};
+      sessions.forEach(s => obj[String(s.id)] = s);
+      await sessionsRef.set(obj);
+      showSyncStatus('ok');
+    }
+
+    updateBadge();
+    renderSettingsPlayers();
+    const histTab = document.getElementById('page-history');
+    if(histTab && histTab.classList.contains('active')) renderHistory();
+    const sumTab = document.getElementById('page-summary');
+    if(sumTab && sumTab.classList.contains('active')) renderSessionSelect();
+    showToast(`已匯入 ${sessions.length} 場賽事`);
+  } catch(e) {
+    console.error('importBackupJSON failed:', e);
+    showToast('匯入失敗：請確認備份檔格式');
+  } finally {
+    if(input) input.value = '';
+  }
+}
+
 async function persistToFirebase(session) {
   if(typeof firebase === 'undefined' || !sessionsRef) {
     showToast('離線模式：資料已存本機');
@@ -1778,106 +1920,6 @@ function updateBadge() {
     el2.textContent = sessions.length+'場紀錄';
   }
 }
-
-function sanitizeBackupSessions(raw) {
-  if(!Array.isArray(raw)) return [];
-  return raw
-    .filter(s => s && typeof s === 'object' && Array.isArray(s.players))
-    .map(s => ({
-      ...s,
-      id: s.id || Date.now() + '_' + Math.random().toString(16).slice(2),
-      name: s.name || '未命名賽事',
-      date: s.date || new Date().toISOString(),
-      buyin: +s.buyin || 330,
-      cps: +s.cps || 30000,
-      players: s.players.map(p => ({
-        ...p,
-        name: p.name || '',
-        sets: +p.sets || 0,
-        chips: +p.chips || 0,
-        cost: +p.cost || 0,
-        prize: +p.prize || 0,
-        rankPrize: +p.rankPrize || 0,
-        net: +p.net || 0
-      }))
-    }));
-}
-
-function exportBackupJSON() {
-  try {
-    const payload = {
-      app: 'whitetree5-poker-tracker',
-      version: 'backup-1',
-      exportedAt: new Date().toISOString(),
-      sessions,
-      playerList: getPlayerList(),
-      myName: getUsername()
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const d = new Date();
-    const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-    a.href = url;
-    a.download = `whitetree5_backup_${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1200);
-    showToast('已匯出備份檔');
-  } catch(e) {
-    console.error('exportBackupJSON failed:', e);
-    showToast('匯出失敗');
-  }
-}
-
-async function importBackupJSON(event) {
-  const file = event?.target?.files?.[0];
-  if(event?.target) event.target.value = '';
-  if(!file) return;
-
-  try {
-    const rawText = await file.text();
-    const data = JSON.parse(rawText);
-    const importedSessions = sanitizeBackupSessions(data.sessions || data);
-    if(!importedSessions.length) {
-      alert('這個檔案沒有可匯入的賽事資料');
-      return;
-    }
-
-    const ok = confirm(`確定匯入 ${importedSessions.length} 筆賽事？\n\n匯入後會覆蓋目前賽事清單，建議先匯出現有備份。`);
-    if(!ok) return;
-
-    sessions = importedSessions.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-    persist();
-
-    if(data.playerList && Array.isArray(data.playerList)) {
-      localStorage.setItem('poker_player_list', JSON.stringify(data.playerList.filter(Boolean)));
-    }
-    if(data.myName) {
-      setUsername(data.myName);
-    }
-
-    if(typeof firebase !== 'undefined' && sessionsRef && (!auth || (auth.currentUser && auth.currentUser.uid === ALLOWED_UID))) {
-      showSyncStatus('saving');
-      const obj = {};
-      sessions.forEach(s => obj[String(s.id)] = s);
-      await sessionsRef.set(obj);
-      showSyncStatus('ok');
-    }
-
-    updateBadge();
-    renderHistory();
-    renderSessionSelect();
-    renderSettingsPlayers();
-    refreshUsernameBtn();
-    showToast(`已匯入 ${sessions.length} 筆賽事`);
-  } catch(e) {
-    console.error('importBackupJSON failed:', e);
-    showToast('匯入失敗，請確認 JSON 檔');
-  }
-}
-
 function showToast(msg) {
   const t=document.createElement('div');
   t.textContent=msg;
