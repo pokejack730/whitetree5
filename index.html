@@ -1685,9 +1685,35 @@ window.exportImage = async function() {
     // 匯出圖片不需要操作按鈕，避免底部也被截進去。
     clone.querySelectorAll('button, .modal-handle').forEach(el => el.remove());
 
-    Object.assign(clone.style, {
+    const isSummary = source.id === 'summary-result';
+    const isModal = source.id === 'modal-box';
+    const isExportCard = source.id === 'export-card';
+    const shellPaddingX = 40;
+    const shellPaddingY = 28;
+
+    const shell = document.createElement('div');
+    Object.assign(shell.style, {
       display: 'block',
       position: 'absolute',
+      left: '0',
+      top: '0',
+      width: `${width + shellPaddingX * 2}px`,
+      maxWidth: `${width + shellPaddingX * 2}px`,
+      minWidth: `${width + shellPaddingX * 2}px`,
+      height: 'auto',
+      maxHeight: 'none',
+      overflow: 'visible',
+      pointerEvents: 'none',
+      zIndex: '-1',
+      background: EXPORT_BG,
+      boxSizing: 'border-box',
+      padding: `${shellPaddingY}px ${shellPaddingX}px ${shellPaddingY + 8}px`,
+      color: '#e8eaf0'
+    });
+
+    Object.assign(clone.style, {
+      display: 'block',
+      position: 'relative',
       left: '0',
       top: '0',
       width: `${width}px`,
@@ -1699,11 +1725,50 @@ window.exportImage = async function() {
       transform: 'none',
       animation: 'none',
       pointerEvents: 'none',
-      zIndex: '-1',
-      background: EXPORT_BG,
+      background: isSummary ? 'transparent' : '#161920',
       color: '#e8eaf0',
-      boxSizing: 'border-box'
+      boxSizing: 'border-box',
+      margin: '0 auto',
+      borderRadius: isSummary ? '0' : '22px',
+      border: isSummary ? 'none' : '1px solid rgba(255,255,255,.08)',
+      boxShadow: isSummary ? 'none' : '0 10px 28px rgba(0,0,0,.28)',
+      paddingRight: '18px',
+      paddingBottom: '12px'
     });
+
+    if (isModal) {
+      clone.style.padding = '24px 22px 28px';
+      clone.style.borderRadius = '22px';
+    }
+    if (isExportCard) {
+      clone.style.padding = '26px 28px 24px';
+      clone.style.borderRadius = '22px';
+      clone.style.border = '1px solid rgba(255,255,255,.08)';
+    }
+    if (isSummary) {
+      clone.style.padding = '0';
+      clone.style.margin = '0 auto';
+    }
+
+    // 統一讓卡片與表格在圖片中更像正式報表。
+    clone.querySelectorAll('.card').forEach(card => {
+      card.style.marginBottom = '16px';
+      card.style.borderRadius = '16px';
+      card.style.border = '1px solid rgba(255,255,255,.08)';
+      card.style.boxShadow = '0 8px 22px rgba(0,0,0,.20)';
+    });
+    clone.querySelectorAll('.metrics').forEach(el => el.style.gap = '14px');
+    clone.querySelectorAll('.metric').forEach(el => {
+      el.style.borderRadius = '14px';
+      el.style.padding = '14px 16px';
+    });
+    clone.querySelectorAll('table').forEach(table => {
+      table.style.width = 'max-content';
+      table.style.maxWidth = 'none';
+    });
+    clone.querySelectorAll('th:first-child, td:first-child').forEach(el => el.style.paddingLeft = '14px');
+    clone.querySelectorAll('th:last-child, td:last-child').forEach(el => el.style.paddingRight = '28px');
+    clone.querySelectorAll('.btn-row').forEach(el => el.remove());
 
     // 解除內層橫向/縱向捲動限制，讓表格與內容完整攤開。
     clone.querySelectorAll('*').forEach(el => {
@@ -1717,8 +1782,23 @@ window.exportImage = async function() {
       }
     });
 
-    document.body.appendChild(clone);
-    return clone;
+    if (!isExportCard) {
+      const footer = document.createElement('div');
+      footer.textContent = `Poker Tracker · ${new Date().toLocaleDateString('zh-TW')}`;
+      Object.assign(footer.style, {
+        marginTop: '18px',
+        paddingTop: '10px',
+        borderTop: '1px solid rgba(255,255,255,.07)',
+        fontSize: '10px',
+        color: '#6b7280',
+        textAlign: 'right'
+      });
+      clone.appendChild(footer);
+    }
+
+    shell.appendChild(clone);
+    document.body.appendChild(shell);
+    return shell;
   }
 
   async function renderFullElement(source, width) {
@@ -1726,17 +1806,18 @@ window.exportImage = async function() {
       throw new Error('html2canvas is not loaded');
     }
 
-    const clone = makeExportClone(source, width);
+    const exportRoot = makeExportClone(source, width);
+    const exportContent = exportRoot.firstElementChild || exportRoot;
     try {
       await waitForReady();
 
       // 有些明細表格原本藏在橫向捲動區，scrollWidth 不一定會把右側溢出的欄位算進去。
       // 這裡改用所有子元素的實際 bounding box 重新量一次，讓左右要拉的資料也會進圖。
-      const baseRect = clone.getBoundingClientRect();
-      let paintedRight = Math.max(clone.scrollWidth, clone.offsetWidth, width);
-      let paintedBottom = Math.max(clone.scrollHeight, clone.offsetHeight);
+      const baseRect = exportRoot.getBoundingClientRect();
+      let paintedRight = Math.max(exportRoot.scrollWidth, exportRoot.offsetWidth, width);
+      let paintedBottom = Math.max(exportRoot.scrollHeight, exportRoot.offsetHeight);
 
-      clone.querySelectorAll('*').forEach(el => {
+      exportRoot.querySelectorAll('*').forEach(el => {
         const rect = el.getBoundingClientRect();
         if (rect && rect.width && rect.height) {
           paintedRight = Math.max(paintedRight, rect.right - baseRect.left);
@@ -1745,20 +1826,20 @@ window.exportImage = async function() {
         paintedRight = Math.max(paintedRight, el.scrollWidth || 0, el.offsetWidth || 0);
       });
 
-      const fullWidth = Math.ceil(paintedRight + 24);
-      const fullHeight = Math.ceil(paintedBottom + 24);
+      const fullWidth = Math.ceil(paintedRight + 56);
+      const fullHeight = Math.ceil(paintedBottom + 28);
 
-      clone.style.width = `${fullWidth}px`;
-      clone.style.maxWidth = `${fullWidth}px`;
-      clone.style.minWidth = `${fullWidth}px`;
-      clone.querySelectorAll('table').forEach(table => {
+      exportRoot.style.width = `${fullWidth}px`;
+      exportRoot.style.maxWidth = `${fullWidth}px`;
+      exportRoot.style.minWidth = `${fullWidth}px`;
+      exportContent.querySelectorAll('table').forEach(table => {
         table.style.width = 'max-content';
         table.style.minWidth = `${Math.max(table.scrollWidth || 0, table.offsetWidth || 0, width)}px`;
       });
 
       await waitForReady();
 
-      return await html2canvas(clone, {
+      return await html2canvas(exportRoot, {
         backgroundColor: EXPORT_BG,
         scale: Math.min(2, window.devicePixelRatio || 2),
         useCORS: true,
@@ -1772,7 +1853,7 @@ window.exportImage = async function() {
         scrollY: 0
       });
     } finally {
-      clone.remove();
+      exportRoot.remove();
     }
   }
 
@@ -1859,9 +1940,32 @@ window.exportImage = async function() {
 
     if (btn) { btn.textContent = '⏳ 生成統計圖片...'; btn.disabled = true; }
     try {
-      const checked = document.querySelectorAll('#session-select input[type=checkbox]:checked').length;
-      const width = Math.max(760, wrap.scrollWidth || 760);
-      const canvas = await renderFullElement(wrap, width);
+      const selectedSessions = sessions.filter(s => {
+        const el = document.getElementById('chk-' + s.id);
+        return el && el.checked;
+      });
+      const checked = selectedSessions.length;
+      const exportSource = document.createElement('div');
+      const dateList = selectedSessions.map(s => new Date(s.date)).filter(d => !isNaN(d));
+      const minDate = dateList.length ? new Date(Math.min(...dateList.map(d => d.getTime()))) : null;
+      const maxDate = dateList.length ? new Date(Math.max(...dateList.map(d => d.getTime()))) : null;
+      const dateText = minDate && maxDate
+        ? `${minDate.toLocaleDateString('zh-TW')} ～ ${maxDate.toLocaleDateString('zh-TW')}`
+        : new Date().toLocaleDateString('zh-TW');
+
+      exportSource.innerHTML = `
+        <div class="card" style="margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+            <div>
+              <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px">多場統計總覽</div>
+              <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">${dateText}</div>
+            </div>
+            <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">共選擇 <span style="color:var(--accent);font-weight:700">${checked}</span> 場賽事</div>
+          </div>
+        </div>`;
+      exportSource.appendChild(wrap.cloneNode(true));
+      const width = Math.max(820, wrap.scrollWidth || 760);
+      const canvas = await renderFullElement(exportSource, width);
       const result = await shareOrDownloadCanvas(canvas, `poker_summary_${checked}sessions.png`);
       if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
       else if (result.method === 'cancel') showToast('已取消分享');
