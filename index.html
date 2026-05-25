@@ -451,6 +451,16 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div id="settings-players-list" style="margin-bottom:16px"></div>
 
+    <div class="card-title" style="margin-bottom:8px">資料備份</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="btn sm" onclick="exportBackupJSON()">⬇️ 匯出全部資料</button>
+      <button class="btn sm" onclick="document.getElementById('backup-import-file').click()">⬆️ 匯入備份</button>
+      <input id="backup-import-file" type="file" accept="application/json,.json" style="display:none" onchange="importBackupJSON(event)">
+    </div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:16px">
+      建議每隔一段時間匯出一份 JSON 備份。匯入時會先詢問確認，並用檔案內的賽事資料覆蓋目前清單。
+    </div>
+
     <button class="btn" onclick="closeSettings()" style="width:100%">完成</button>
   </div>
 </div>
@@ -1768,6 +1778,106 @@ function updateBadge() {
     el2.textContent = sessions.length+'場紀錄';
   }
 }
+
+function sanitizeBackupSessions(raw) {
+  if(!Array.isArray(raw)) return [];
+  return raw
+    .filter(s => s && typeof s === 'object' && Array.isArray(s.players))
+    .map(s => ({
+      ...s,
+      id: s.id || Date.now() + '_' + Math.random().toString(16).slice(2),
+      name: s.name || '未命名賽事',
+      date: s.date || new Date().toISOString(),
+      buyin: +s.buyin || 330,
+      cps: +s.cps || 30000,
+      players: s.players.map(p => ({
+        ...p,
+        name: p.name || '',
+        sets: +p.sets || 0,
+        chips: +p.chips || 0,
+        cost: +p.cost || 0,
+        prize: +p.prize || 0,
+        rankPrize: +p.rankPrize || 0,
+        net: +p.net || 0
+      }))
+    }));
+}
+
+function exportBackupJSON() {
+  try {
+    const payload = {
+      app: 'whitetree5-poker-tracker',
+      version: 'backup-1',
+      exportedAt: new Date().toISOString(),
+      sessions,
+      playerList: getPlayerList(),
+      myName: getUsername()
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    a.href = url;
+    a.download = `whitetree5_backup_${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1200);
+    showToast('已匯出備份檔');
+  } catch(e) {
+    console.error('exportBackupJSON failed:', e);
+    showToast('匯出失敗');
+  }
+}
+
+async function importBackupJSON(event) {
+  const file = event?.target?.files?.[0];
+  if(event?.target) event.target.value = '';
+  if(!file) return;
+
+  try {
+    const rawText = await file.text();
+    const data = JSON.parse(rawText);
+    const importedSessions = sanitizeBackupSessions(data.sessions || data);
+    if(!importedSessions.length) {
+      alert('這個檔案沒有可匯入的賽事資料');
+      return;
+    }
+
+    const ok = confirm(`確定匯入 ${importedSessions.length} 筆賽事？\n\n匯入後會覆蓋目前賽事清單，建議先匯出現有備份。`);
+    if(!ok) return;
+
+    sessions = importedSessions.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    persist();
+
+    if(data.playerList && Array.isArray(data.playerList)) {
+      localStorage.setItem('poker_player_list', JSON.stringify(data.playerList.filter(Boolean)));
+    }
+    if(data.myName) {
+      setUsername(data.myName);
+    }
+
+    if(typeof firebase !== 'undefined' && sessionsRef && (!auth || (auth.currentUser && auth.currentUser.uid === ALLOWED_UID))) {
+      showSyncStatus('saving');
+      const obj = {};
+      sessions.forEach(s => obj[String(s.id)] = s);
+      await sessionsRef.set(obj);
+      showSyncStatus('ok');
+    }
+
+    updateBadge();
+    renderHistory();
+    renderSessionSelect();
+    renderSettingsPlayers();
+    refreshUsernameBtn();
+    showToast(`已匯入 ${sessions.length} 筆賽事`);
+  } catch(e) {
+    console.error('importBackupJSON failed:', e);
+    showToast('匯入失敗，請確認 JSON 檔');
+  }
+}
+
 function showToast(msg) {
   const t=document.createElement('div');
   t.textContent=msg;
