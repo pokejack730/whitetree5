@@ -1647,5 +1647,205 @@ window.exportImage = async function() {
   await _exportImage();
 }
 </script>
+
+
+<script>
+// ─── FULL IMAGE EXPORT PATCH 2026-05-25 ───
+// 修正 html2canvas 只截到可視範圍的問題：先建立完整尺寸的匯出複本，再用 scrollHeight/scrollWidth 輸出整張長圖。
+(function(){
+  const EXPORT_BG = '#161920';
+
+  function safeFileName(name) {
+    return String(name || 'poker-session')
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '-')
+      .replace(/\s+/g, '_')
+      .slice(0, 80) || 'poker-session';
+  }
+
+  function waitFrame() {
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
+
+  async function waitForReady() {
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready; } catch(e) {}
+    }
+    await waitFrame();
+  }
+
+  function makeExportClone(source, width) {
+    const clone = source.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+
+    // 匯出圖片不需要操作按鈕，避免底部也被截進去。
+    clone.querySelectorAll('button, .modal-handle').forEach(el => el.remove());
+
+    Object.assign(clone.style, {
+      display: 'block',
+      position: 'absolute',
+      left: '0',
+      top: '0',
+      width: `${width}px`,
+      maxWidth: `${width}px`,
+      minWidth: `${width}px`,
+      height: 'auto',
+      maxHeight: 'none',
+      overflow: 'visible',
+      transform: 'none',
+      animation: 'none',
+      pointerEvents: 'none',
+      zIndex: '-1',
+      background: EXPORT_BG,
+      color: '#e8eaf0',
+      boxSizing: 'border-box'
+    });
+
+    // 解除內層橫向/縱向捲動限制，讓表格與內容完整攤開。
+    clone.querySelectorAll('*').forEach(el => {
+      const cs = window.getComputedStyle(el);
+      const hasScrollLimit = /(auto|scroll|hidden)/.test(cs.overflow + cs.overflowX + cs.overflowY);
+      if (hasScrollLimit) {
+        el.style.maxHeight = 'none';
+        el.style.overflow = 'visible';
+        el.style.overflowX = 'visible';
+        el.style.overflowY = 'visible';
+      }
+    });
+
+    document.body.appendChild(clone);
+    return clone;
+  }
+
+  async function renderFullElement(source, width) {
+    if (window._h2cLoadErr || typeof html2canvas === 'undefined') {
+      throw new Error('html2canvas is not loaded');
+    }
+
+    const clone = makeExportClone(source, width);
+    try {
+      await waitForReady();
+      const fullWidth = Math.ceil(Math.max(clone.scrollWidth, clone.offsetWidth, width));
+      const fullHeight = Math.ceil(Math.max(clone.scrollHeight, clone.offsetHeight));
+      return await html2canvas(clone, {
+        backgroundColor: EXPORT_BG,
+        scale: Math.min(2, window.devicePixelRatio || 2),
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        width: fullWidth,
+        height: fullHeight,
+        windowWidth: fullWidth,
+        windowHeight: fullHeight,
+        scrollX: 0,
+        scrollY: 0
+      });
+    } finally {
+      clone.remove();
+    }
+  }
+
+  function isIOSDevice() {
+    const ua = navigator.userAgent || '';
+    const platform = navigator.platform || '';
+    return /iPad|iPhone|iPod/i.test(ua) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  function canvasToBlob(canvas) {
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+  }
+
+  function triggerCanvasDownload(canvas, fileName, blob) {
+    if (!blob) {
+      const a = document.createElement('a');
+      a.download = fileName;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.download = fileName;
+    a.href = url;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  async function shareOrDownloadCanvas(canvas, fileName) {
+    const blob = await canvasToBlob(canvas);
+
+    // iPhone / iPad 優先叫出分享選單，讓使用者可直接按「儲存圖片」進入照片 App。
+    if (blob && isIOSDevice() && navigator.share && navigator.canShare) {
+      try {
+        const file = new File([blob], fileName, { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file] });
+          return { method: 'share' };
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError') {
+          return { method: 'cancel' };
+        }
+        console.warn('navigator.share failed, fallback to download:', err);
+      }
+    }
+
+    // 電腦或不支援分享的裝置，退回一般下載。
+    triggerCanvasDownload(canvas, fileName, blob);
+    return { method: 'download' };
+  }
+
+  window.exportImage = async function() {
+    const card = document.getElementById('export-card');
+    const btn  = document.getElementById('btn-export');
+    if (!card) return showToast('找不到匯出卡片');
+    if (typeof buildExportCard === 'function') buildExportCard();
+
+    if (btn) { btn.textContent = '⏳ 生成完整圖片...'; btn.disabled = true; }
+    try {
+      card.style.display = 'block';
+      const canvas = await renderFullElement(card, 680);
+      const sessionName = document.getElementById('s-name')?.value?.trim() || new Date().toLocaleDateString('zh-TW');
+      const result = await shareOrDownloadCanvas(canvas, `poker_${safeFileName(sessionName)}.png`);
+      if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
+      else if (result.method === 'cancel') showToast('已取消分享');
+      else showToast('完整圖片已下載！');
+    } catch(e) {
+      console.error('exportImage failed:', e);
+      showToast('導出失敗，請重試');
+    } finally {
+      card.style.display = 'none';
+      if (btn) { btn.textContent = '📸 導出圖片'; btn.disabled = false; }
+    }
+  };
+
+  window.exportModalImage = async function() {
+    const modal = document.getElementById('session-modal');
+    const box = document.getElementById('modal-box');
+    const s = sessions.find(s => String(s.id) === String(modal?._sid));
+    const btn = document.querySelector('#session-modal button[onclick*="exportModalImage"]') || document.activeElement;
+    if (!box) return showToast('找不到賽事明細');
+
+    if (btn) { btn.textContent = '⏳ 生成完整圖片...'; btn.disabled = true; }
+    try {
+      const width = Math.min(680, Math.max(560, box.scrollWidth || 680));
+      const canvas = await renderFullElement(box, width);
+      const result = await shareOrDownloadCanvas(canvas, `poker_${safeFileName(s ? s.name : 'session')}.png`);
+      if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
+      else if (result.method === 'cancel') showToast('已取消分享');
+      else showToast('完整圖片已下載！');
+    } catch(e) {
+      console.error('exportModalImage failed:', e);
+      showToast('導出失敗，請重試');
+    } finally {
+      if (btn) { btn.textContent = '📸 導出圖片'; btn.disabled = false; }
+    }
+  };
+})();
+</script>
+
 </body>
 </html>
