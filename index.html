@@ -199,6 +199,7 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
   <button class="tab active" onclick="switchTab('calc',this)">單場結算</button>
   <button class="tab" onclick="switchTab('history',this)">賽事紀錄</button>
   <button class="tab" onclick="switchTab('summary',this)">多場統計</button>
+  <button class="tab" onclick="switchTab('health',this)">資料檢查</button>
 </div>
 
 <div class="main">
@@ -337,6 +338,7 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div class="card-title" style="margin:0">所有賽事紀錄</div>
       <button class="btn sm ghost" onclick="clearAll()">清除全部</button>
     </div>
+    <input id="history-search" type="text" placeholder="搜尋賽事名稱 / 玩家 / 日期 / 儲存者" oninput="renderHistory()" style="margin-bottom:10px">
     <div id="history-list"></div>
   </div>
 </div>
@@ -375,6 +377,19 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
     </div>
     <div id="session-select"></div>
   </div>
+
+  <div class="card">
+    <div class="card-title">玩家篩選</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>只看指定玩家</label>
+        <select id="summary-player-filter">
+          <option value="">全部玩家</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
   <div class="btn-row">
     <button class="btn primary" onclick="calcSummary()">📊 計算統計</button>
   </div>
@@ -395,6 +410,11 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
       <div id="summary-leaderboards"></div>
     </div>
     <div class="card">
+      <div class="card-title">玩家對比</div>
+      <div id="player-compare-controls"></div>
+      <div id="player-compare-result" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
       <div class="card-title">名次榮譽榜</div>
       <table class="rtable">
         <thead><tr>
@@ -407,8 +427,29 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
       <button class="btn" id="btn-export-summary" onclick="exportSummaryImage()">📸 導出統計圖片</button>
       <button class="btn" id="btn-export-summary-settlement" onclick="exportSummaryImageWithSettlement()">📸 導出含場地/籌碼/桌統計結算</button>
       <button class="btn" id="btn-export-leaderboards" onclick="exportSummaryLeaderboardsImage()">🏆 導出玩家排行榜</button>
+      <select id="brief-tone" style="max-width:120px">
+        <option value="formal">正式版</option>
+        <option value="fun">趣味版</option>
+        <option value="minimal">極簡版</option>
+      </select>
       <button class="btn" id="btn-export-brief" onclick="exportBriefReportImage()">📰 導出戰報短圖</button>
     </div>
+  </div>
+</div>
+
+
+
+<!-- ══════════════ TAB 4: 資料檢查 ══════════════ -->
+<div id="page-health" class="page">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="card-title" style="margin:0">資料健康檢查</div>
+      <button class="btn sm" onclick="renderHealthCheck()">重新檢查</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">
+      會檢查籌碼不平、費用驗算異常、賽事名稱重複、玩家名稱疑似重複等資料問題。
+    </div>
+    <div id="health-result"></div>
   </div>
 </div>
 
@@ -462,6 +503,21 @@ hr.div{border:none;border-top:1px solid var(--border);margin:12px 0}
       <button class="btn sm" onclick="addTablePresetFromSettings()">＋ 新增桌型</button>
     </div>
     <div id="settings-table-presets" style="margin-bottom:16px"></div>
+
+    <!-- Merge Players -->
+    <div class="card-title">玩家名稱合併</div>
+    <div class="form-row" style="margin-bottom:8px">
+      <div class="form-group">
+        <label>把這個名稱</label>
+        <input id="merge-from" list="merge-player-names" placeholder="例如：JKY">
+      </div>
+      <div class="form-group">
+        <label>合併成</label>
+        <input id="merge-to" list="merge-player-names" placeholder="例如：Jky">
+      </div>
+    </div>
+    <datalist id="merge-player-names"></datalist>
+    <button class="btn sm" onclick="mergePlayerNames()" style="margin-bottom:16px">合併玩家名稱</button>
 
     <!-- Backup -->
     <div class="card-title">資料備份</div>
@@ -760,6 +816,7 @@ function switchTab(t, el) {
   el.classList.add('active');
   if(t==='history') renderHistory();
   if(t==='summary') renderSessionSelect();
+  if(t==='health') renderHealthCheck();
 }
 
 // ─── FEE DISPLAY ───
@@ -1259,8 +1316,26 @@ async function saveSession() {
 // ─── HISTORY ───
 function renderHistory() {
   const div = document.getElementById('history-list');
+  const q = (document.getElementById('history-search')?.value || '').trim().toLowerCase();
+
+  let list = [...sessions].reverse();
+  if(q) {
+    list = list.filter(s => {
+      const hay = [
+        s.name,
+        s.savedBy,
+        new Date(s.date).toLocaleDateString('zh-TW'),
+        new Date(s.date).toLocaleString('zh-TW'),
+        ...(s.players||[]).map(p=>p.name)
+      ].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
   if(!sessions.length) { div.innerHTML='<div class="empty"><div class="empty-icon">🃏</div>尚無賽事紀錄<br><small>在單場結算頁計算後，按「儲存」即可</small></div>'; return; }
-  div.innerHTML = [...sessions].reverse().map(s => {
+  if(!list.length) { div.innerHTML='<div class="empty"><div class="empty-icon">🔎</div>找不到符合的賽事</div>'; return; }
+
+  div.innerHTML = list.map(s => {
     const pHTML = s.players.map(p=>
       `<span style="color:var(--${p.net>=0?'green':'red'})">${p.name} ${p.net>=0?'+':''}${Math.floor(p.net)}</span>`
     ).join('<span style="color:var(--muted)"> · </span>');
@@ -1275,9 +1350,12 @@ function renderHistory() {
         <div class="session-title">${s.name}</div>
         <div class="session-meta">${new Date(s.date).toLocaleString('zh-TW')} ｜ $${s.buyin} ｜ ${s.players.length}人${savedTag}</div>
         <div style="margin-top:4px;font-size:11px;color:var(--muted);font-family:var(--mono)">
-          場地 ${vp} ／ 籌碼 ${cp} ／ 桌子 ${tp} ／ 共 <span style="color:var(--accent)">${vp+cp+tp}</span>
+          場地 ${vp} ／ 籌碼 ${cp} ／ 桌子 ${tp} ｜ 共 ${totalSets} 組
         </div>
         <div class="session-players" style="margin-top:4px;font-size:11px;display:flex;gap:8px;flex-wrap:wrap">${pHTML}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button class="btn sm" onclick="event.stopPropagation();copySessionToNew('${s.id}')">複製玩家開新場</button>
+        </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <span style="color:var(--muted);font-size:18px;line-height:1">›</span>
@@ -1285,6 +1363,28 @@ function renderHistory() {
       </div>
     </div>`;
   }).join('');
+}
+function copySessionToNew(sessionId) {
+  const s = sessions.find(x=>String(x.id)===String(sessionId));
+  if(!s) return;
+  if(!confirm(`複製「${s.name}」的玩家名單開新場？\\n\\n籌碼會清空，組數預設 1 組。`)) return;
+  document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(e=>e.classList.remove('active'));
+  document.querySelector('.tab[onclick*="calc"]')?.classList.add('active');
+  document.getElementById('page-calc')?.classList.add('active');
+
+  players = (s.players||[]).map(p => ({ name:p.name, sets:1, chips:'', rank:'' }));
+  document.getElementById('s-buyin').value = s.buyin || 330;
+  document.getElementById('s-cps').value = s.cps || 30000;
+  document.getElementById('s-name').value = '';
+  suggestSessionName(false);
+  updateFeeDisplay();
+  renderPlayers();
+  updateChipCheck();
+  document.getElementById('calc-result').style.display='none';
+  lastResult = null;
+  saveDraft();
+  showToast('已複製玩家名單，可直接開新場');
 }
 
 // ─── DELETE PASSWORD ───
@@ -1430,15 +1530,34 @@ function renderSessionSelect() {
     const isChecked = selectedIds.has(String(s.id));
     const isOut = !isChecked;
     return `<div class="chk-row" style="${isOut?'opacity:.42':''}">
-      <input type="checkbox" id="chk-${s.id}" ${isChecked?'checked':''}>
+      <input type="checkbox" id="chk-${s.id}" ${isChecked?'checked':''} onchange="updateSummaryPlayerFilterOptions()">
       <label for="chk-${s.id}" style="white-space:nowrap;min-width:72px;flex:0 0 auto">${s.name}</label>
       <span class="chk-meta">${new Date(s.date).toLocaleDateString('zh-TW')} ｜ $${s.buyin} ｜ ${s.players.length}人${isOut?' ｜ 未在篩選範圍':''}</span>
     </div>`;
   }).join('');
+  updateSummaryPlayerFilterOptions();
 }
-function selectAll(v) { document.querySelectorAll('#session-select input[type=checkbox]').forEach(c=>c.checked=v); }
+function selectAll(v) { document.querySelectorAll('#session-select input[type=checkbox]').forEach(c=>c.checked=v); updateSummaryPlayerFilterOptions(); }
 
 // ─── SUMMARY ───
+function getAllPlayersFromSessions(list = sessions) {
+  return [...new Set(list.flatMap(s => (s.players||[]).map(p => String(p.name||'').trim()).filter(Boolean)))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+}
+
+function updateSummaryPlayerFilterOptions() {
+  const sel = document.getElementById('summary-player-filter');
+  if(!sel) return;
+  const current = sel.value;
+  const selected = getSelectedSummarySessions();
+  const names = getAllPlayersFromSessions(selected.length ? selected : sessions);
+  sel.innerHTML = '<option value="">全部玩家</option>' + names.map(n => `<option value="${n}">${n}</option>`).join('');
+  if(names.includes(current)) sel.value = current;
+}
+
+function getSummaryPlayerFilterValue() {
+  return document.getElementById('summary-player-filter')?.value || '';
+}
+
 function getSelectedSummarySessions() {
   return sessions.filter(s=>{
     const el = document.getElementById('chk-'+s.id);
@@ -1448,6 +1567,7 @@ function getSelectedSummarySessions() {
 
 function buildSummaryStats(selected, opts = {}) {
   const includeSettlement = !!opts.includeSettlement;
+  const playerFilter = opts.playerFilter || '';
   const map = {};
   let totalVenue=0, totalChips=0, totalTable=0;
   const singleRows = [];
@@ -1459,6 +1579,7 @@ function buildSummaryStats(selected, opts = {}) {
     totalTable += (FEE.table[b]||0)*ts;
     s.players.forEach(p => {
       if(!p.name) return;
+      if(playerFilter && p.name !== playerFilter) return;
       if(!map[p.name]) map[p.name]={name:p.name,count:0,cost:0,prize:0,rp:0,net:0,r1:0,r2:0,r3:0,settlementAmount:0,settlementType:'',buyins:0,details:[]};
       const m = map[p.name];
       m.count++; m.buyins+=(p.sets||0); m.cost+=p.cost; m.prize+=p.prize; m.rp+=p.rankPrize; m.net+=p.net;
@@ -1562,6 +1683,7 @@ function renderSummaryStatsToDom(stats) {
     </tr>`).join('');
 
   renderSummaryLeaderboards(stats);
+  renderPlayerCompareControls(stats);
 }
 
 function renderSummaryLeaderboards(stats) {
@@ -1612,6 +1734,64 @@ function renderSummaryLeaderboards(stats) {
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">最大單場虧損</div>
         <div style="font-size:13px">${singleList(stats.leaderboards.worstSingle)}</div>
       </div>
+    </div>`;
+}
+
+function renderPlayerCompareControls(stats) {
+  const controls = document.getElementById('player-compare-controls');
+  const result = document.getElementById('player-compare-result');
+  if(!controls) return;
+  const names = stats.list.map(p=>p.name);
+  if(!names.length) {
+    controls.innerHTML = '<div style="font-size:13px;color:var(--muted)">沒有玩家可比較</div>';
+    if(result) result.innerHTML = '';
+    return;
+  }
+  controls.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      ${names.map((n,i)=>`<label style="font-size:13px;color:var(--muted);display:flex;gap:5px;align-items:center">
+        <input type="checkbox" class="compare-player" value="${n}" ${i<4?'checked':''}>${n}
+      </label>`).join('')}
+    </div>
+    <button class="btn sm" onclick="renderPlayerComparison()">更新對比</button>
+    <span style="font-size:12px;color:var(--muted);margin-left:8px">可選 2～4 位玩家</span>`;
+  renderPlayerComparison();
+}
+
+function renderPlayerComparison() {
+  const result = document.getElementById('player-compare-result');
+  if(!result || !lastSummaryStats) return;
+  const selected = [...document.querySelectorAll('.compare-player:checked')].map(el=>el.value).slice(0,4);
+  if(selected.length < 2) {
+    result.innerHTML = '<div style="font-size:13px;color:var(--muted)">請至少選 2 位玩家比較</div>';
+    return;
+  }
+  const rows = selected.map(name => lastSummaryStats.list.find(p=>p.name===name)).filter(Boolean);
+  result.innerHTML = `
+    <div style="overflow-x:auto">
+      <table class="rtable">
+        <thead><tr>
+          <th>玩家</th><th>場次</th><th>買入數</th><th>總淨收付</th><th>平均/場</th><th>🥇</th><th>最高單場</th><th>最大虧損</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(p=>{
+            const details = p.details || [];
+            const best = details.length ? Math.max(...details.map(d=>d.net)) : 0;
+            const worst = details.length ? Math.min(...details.map(d=>d.net)) : 0;
+            const avg = p.count ? p.net/p.count : 0;
+            return `<tr>
+              <td>${p.name}</td>
+              <td class="mono">${p.count}</td>
+              <td class="mono">${p.buyins||0}</td>
+              <td class="${p.net>=0?'pos':'neg'}">${p.net>=0?'+':''}${Math.round(p.net).toLocaleString()}</td>
+              <td class="${avg>=0?'pos':'neg'}">${avg>=0?'+':''}${Math.round(avg).toLocaleString()}</td>
+              <td class="mono">${p.r1}</td>
+              <td class="${best>=0?'pos':'neg'}">${best>=0?'+':''}${Math.round(best).toLocaleString()}</td>
+              <td class="${worst>=0?'pos':'neg'}">${worst>=0?'+':''}${Math.round(worst).toLocaleString()}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
     </div>`;
 }
 
@@ -1677,7 +1857,7 @@ function showPlayerSummaryDetail(name, btn) {
 function calcSummary() {
   const selected = getSelectedSummarySessions();
   if(!selected.length) { alert('請選擇至少一場賽事'); return; }
-  const stats = buildSummaryStats(selected);
+  const stats = buildSummaryStats(selected, { playerFilter: getSummaryPlayerFilterValue() });
   renderSummaryStatsToDom(stats);
   document.getElementById('summary-result').style.display='block';
 }
@@ -1926,6 +2106,7 @@ function openSettings() {
   document.getElementById('set-myname').value = getUsername();
   renderSettingsPlayers();
   renderSettingsTablePresets();
+  renderMergePlayerOptions();
   document.getElementById('settings-modal').style.display='flex';
   document.body.style.overflow='hidden';
 }
@@ -1981,6 +2162,47 @@ function removeSettingPlayer(i) {
 function persist() {
   try { localStorage.setItem('poker_sessions', JSON.stringify(sessions)); } catch(e){}
 }
+function renderMergePlayerOptions() {
+  const dl = document.getElementById('merge-player-names');
+  if(!dl) return;
+  const names = getAllPlayersFromSessions(sessions);
+  dl.innerHTML = names.map(n=>`<option value="${n}"></option>`).join('');
+}
+
+async function mergePlayerNames() {
+  const from = document.getElementById('merge-from')?.value.trim();
+  const to = document.getElementById('merge-to')?.value.trim();
+  if(!from || !to) { alert('請輸入要合併的來源名稱與目標名稱'); return; }
+  if(from === to) { alert('來源與目標名稱相同，不需要合併'); return; }
+
+  let count = 0;
+  const affected = [];
+  sessions.forEach(s => {
+    let changed = false;
+    (s.players||[]).forEach(p => {
+      if(p.name === from) { p.name = to; count++; changed = true; }
+    });
+    if(changed) affected.push(s.name);
+  });
+
+  if(!count) { alert(`沒有找到玩家名稱「${from}」`); return; }
+  if(!confirm(`將 ${count} 筆玩家紀錄從「${from}」合併成「${to}」。\\n影響 ${affected.length} 場賽事。\\n\\n確定執行？`)) return;
+
+  const list = getPlayerList().map(n => n === from ? to : n);
+  savePlayerList([...new Set(list)]);
+
+  persist();
+  if(sessionsRef && (!auth || (auth.currentUser && auth.currentUser.uid === ALLOWED_UID))) {
+    const obj = {};
+    sessions.forEach(s => obj[String(s.id)] = s);
+    await sessionsRef.set(obj);
+  }
+  renderSettingsPlayers();
+  renderMergePlayerOptions();
+  updateBadge();
+  showToast(`已合併 ${count} 筆玩家名稱`);
+}
+
 function safeJSONFileName(name) {
   return String(name || 'whitetree5_backup')
     .trim()
@@ -1990,6 +2212,12 @@ function safeJSONFileName(name) {
 }
 
 function exportBackupJSON() {
+  const dates = sessions.map(s=>new Date(s.date)).filter(d=>!isNaN(d));
+  const minDate = dates.length ? new Date(Math.min(...dates.map(d=>d.getTime()))).toLocaleDateString('zh-TW') : '-';
+  const maxDate = dates.length ? new Date(Math.max(...dates.map(d=>d.getTime()))).toLocaleDateString('zh-TW') : '-';
+  const last = [...sessions].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')))[0];
+  const summary = `即將匯出備份：\n\n賽事：${sessions.length} 場\n日期範圍：${minDate} ～ ${maxDate}\n常用玩家：${getPlayerList().length} 位\n常用桌型：${getTablePresets().length} 組\n最後一場：${last ? last.name : '-'}\n\n確定匯出？`;
+  if(!confirm(summary)) return;
   const payload = {
     app: 'whitetree5-poker-tracker',
     version: 'backup-v1',
@@ -2115,6 +2343,60 @@ function updateBadge() {
     el2.textContent = sessions.length+'場紀錄';
   }
 }
+function renderHealthCheck() {
+  const div = document.getElementById('health-result');
+  if(!div) return;
+  if(!sessions.length) {
+    div.innerHTML = '<div class="empty"><div class="empty-icon">🧹</div>尚無資料可檢查</div>';
+    return;
+  }
+
+  const issues = [];
+  sessions.forEach(s => {
+    const warnings = getSessionWarnings(s);
+    if(warnings.length) issues.push({type:'單場異常', session:s, warnings});
+  });
+
+  const nameMap = {};
+  getAllPlayersFromSessions(sessions).forEach(n => {
+    const key = n.trim().toLowerCase();
+    if(!nameMap[key]) nameMap[key] = [];
+    nameMap[key].push(n);
+  });
+  Object.values(nameMap).forEach(names => {
+    const unique = [...new Set(names)];
+    if(unique.length > 1) issues.push({type:'玩家名稱疑似重複', session:null, warnings:[unique.join(' / ')]});
+  });
+
+  const sessionNameMap = {};
+  sessions.forEach(s => {
+    const key = String(s.name||'').trim();
+    if(!key) return;
+    if(!sessionNameMap[key]) sessionNameMap[key] = [];
+    sessionNameMap[key].push(s);
+  });
+  Object.entries(sessionNameMap).forEach(([name, arr]) => {
+    if(arr.length > 1) issues.push({type:'賽事名稱重複', session:null, warnings:[`${name}：${arr.length} 場`]});
+  });
+
+  if(!issues.length) {
+    div.innerHTML = '<div style="padding:14px;border:1px solid rgba(45,212,191,.25);border-radius:14px;background:rgba(45,212,191,.06);color:var(--green);font-weight:700">✅ 目前沒有發現明顯資料異常</div>';
+    return;
+  }
+
+  div.innerHTML = `
+    <div style="font-size:13px;color:var(--muted);margin-bottom:10px">共發現 <b style="color:var(--accent)">${issues.length}</b> 類/筆提醒</div>
+    ${issues.map((it,idx)=>`
+      <div style="padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.025);margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+          <div style="font-weight:700">${idx+1}. ${it.type}${it.session ? '：' + it.session.name : ''}</div>
+          ${it.session ? `<button class="btn sm" onclick="openModal('${it.session.id}')">查看</button>` : ''}
+        </div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-top:6px">${it.warnings.map(w=>'• '+w).join('<br>')}</div>
+      </div>
+    `).join('')}`;
+}
+
 function showToast(msg) {
   const t=document.createElement('div');
   t.textContent=msg;
@@ -2569,6 +2851,7 @@ window.exportImage = async function() {
 
   function buildSummaryExportSource(selectedSessions, stats, opts = {}) {
     const includeSettlement = !!opts.includeSettlement;
+    const playerFilter = opts.playerFilter || '';
     const exportSource = document.createElement('div');
     const dateList = selectedSessions.map(s => new Date(s.date)).filter(d => !isNaN(d));
     const minDate = dateList.length ? new Date(Math.min(...dateList.map(d => d.getTime()))) : null;
@@ -2589,7 +2872,7 @@ window.exportImage = async function() {
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
           <div>
-            <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px">${includeSettlement ? '多場統計總覽（含場地/籌碼/桌結算）' : '多場統計總覽'}</div>
+            <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px">${includeSettlement ? '多場統計總覽（含場地/籌碼/桌結算）' : '多場統計總覽'}${playerFilter ? '：' + playerFilter : ''}</div>
             <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">${dateText}</div>
             ${noteHtml}
           </div>
@@ -2656,7 +2939,7 @@ window.exportImage = async function() {
 
 
 
-  function buildBriefReportSource(selectedSessions, stats) {
+  function buildBriefReportSource(selectedSessions, stats, opts = {}) {
     const exportSource = document.createElement('div');
     const top = stats.leaderboards.topProfit[0];
     const loss = stats.leaderboards.topLoss[0];
@@ -2669,6 +2952,9 @@ window.exportImage = async function() {
     const dateText = minDate && maxDate
       ? `${minDate.toLocaleDateString('zh-TW')} ～ ${maxDate.toLocaleDateString('zh-TW')}`
       : new Date().toLocaleDateString('zh-TW');
+    const tone = opts.tone || 'formal';
+    const titleMap = { formal:'本次戰報', fun:'牌桌小報', minimal:'戰報' };
+    const label = (formal, fun, minimal) => tone === 'fun' ? fun : (tone === 'minimal' ? minimal : formal);
 
     const metric = (label, main, sub, cls='') => `
       <div style="border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.035);padding:14px 16px">
@@ -2700,18 +2986,18 @@ window.exportImage = async function() {
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
           <div>
-            <div style="font-size:22px;font-weight:800;color:var(--text);margin-bottom:4px">本次戰報</div>
+            <div style="font-size:22px;font-weight:800;color:var(--text);margin-bottom:4px">${titleMap[tone]}</div>
             <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">${dateText}</div>
           </div>
           <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">共 ${selectedSessions.length} 場</div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
-        ${metric('盈利王', `${top?.name||'-'} ${top ? (top.net>=0?'+':'') + Math.round(top.net).toLocaleString() : ''}`, '總淨收付', top?.net>=0?'pos':'neg')}
-        ${metric('最大虧損', `${loss?.name||'-'} ${loss ? (loss.net>=0?'+':'') + Math.round(loss.net).toLocaleString() : ''}`, '總淨收付', loss?.net>=0?'pos':'neg')}
-        ${metric('最高單場盈利', `${best?.name||'-'} ${best ? '+' + Math.round(best.net).toLocaleString() : ''}`, best ? best.sessionName : '', 'pos')}
-        ${metric('最大單場虧損', `${worst?.name||'-'} ${worst ? Math.round(worst.net).toLocaleString() : ''}`, worst ? worst.sessionName : '', 'neg')}
-        ${metric('買入王', `${buyin?.name||'-'} ${buyin ? (buyin.buyins||0) + ' 組' : ''}`, '總買入組數')}
+        ${metric(label('盈利王','本桌吸金王','盈利'), `${top?.name||'-'} ${top ? (top.net>=0?'+':'') + Math.round(top.net).toLocaleString() : ''}`, '總淨收付', top?.net>=0?'pos':'neg')}
+        ${metric(label('最大虧損','今日贊助王','虧損'), `${loss?.name||'-'} ${loss ? (loss.net>=0?'+':'') + Math.round(loss.net).toLocaleString() : ''}`, '總淨收付', loss?.net>=0?'pos':'neg')}
+        ${metric(label('最高單場盈利','單場暴擊','單場盈'), `${best?.name||'-'} ${best ? '+' + Math.round(best.net).toLocaleString() : ''}`, best ? best.sessionName : '', 'pos')}
+        ${metric(label('最大單場虧損','單場補血包','單場虧'), `${worst?.name||'-'} ${worst ? Math.round(worst.net).toLocaleString() : ''}`, worst ? worst.sessionName : '', 'neg')}
+        ${metric(label('買入王','籌碼補給站','買入'), `${buyin?.name||'-'} ${buyin ? (buyin.buyins||0) + ' 組' : ''}`, '總買入組數')}
         ${rankTopCard}
       </div>`;
     return exportSource;
@@ -2725,7 +3011,8 @@ window.exportImage = async function() {
     if (btn) { btn.textContent = '⏳ 生成戰報短圖...'; btn.disabled = true; }
     try {
       const stats = buildSummaryStats(selectedSessions);
-      const exportSource = buildBriefReportSource(selectedSessions, stats);
+      const tone = document.getElementById('brief-tone')?.value || 'formal';
+      const exportSource = buildBriefReportSource(selectedSessions, stats, { tone });
       const canvas = await renderFullElement(exportSource, 640);
       const result = await shareOrDownloadCanvas(canvas, `poker_brief_${selectedSessions.length}sessions.png`);
       if (result.method === 'share') showToast('已開啟分享選單，可選「儲存圖片」');
@@ -2828,8 +3115,9 @@ window.exportImage = async function() {
 
     if (btn) { btn.textContent = '⏳ 生成統計結算圖片...'; btn.disabled = true; }
     try {
-      const stats = buildSummaryStats(selectedSessions, { includeSettlement: true });
-      const exportSource = buildSummaryExportSource(selectedSessions, stats, { includeSettlement: true });
+      const playerFilter = getSummaryPlayerFilterValue();
+      const stats = buildSummaryStats(selectedSessions, { includeSettlement: true, playerFilter });
+      const exportSource = buildSummaryExportSource(selectedSessions, stats, { includeSettlement: true, playerFilter });
       const summaryTables = exportSource.querySelectorAll('table');
       const widestSummaryTable = Math.max(0, ...Array.from(summaryTables).map(t => Math.max(t.scrollWidth || 0, t.offsetWidth || 0)));
       const width = Math.max(800, widestSummaryTable + 96);
@@ -2853,8 +3141,9 @@ window.exportImage = async function() {
 
     if (btn) { btn.textContent = '⏳ 生成統計圖片...'; btn.disabled = true; }
     try {
-      const stats = buildSummaryStats(selectedSessions);
-      const exportSource = buildSummaryExportSource(selectedSessions, stats);
+      const playerFilter = getSummaryPlayerFilterValue();
+      const stats = buildSummaryStats(selectedSessions, { playerFilter });
+      const exportSource = buildSummaryExportSource(selectedSessions, stats, { playerFilter });
       const summaryTables = exportSource.querySelectorAll('table');
       const widestSummaryTable = Math.max(0, ...Array.from(summaryTables).map(t => Math.max(t.scrollWidth || 0, t.offsetWidth || 0)));
       const width = Math.max(800, widestSummaryTable + 96);
